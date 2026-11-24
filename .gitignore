@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.log
+*.zip
+*.mp4
+*.mov
+*.jpg
+*.jpeg
+*.list
+*.json
+.env*
+Runs/
+Records/
+Configuration/
+*.lock
