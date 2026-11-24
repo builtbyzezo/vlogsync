@@ -27,6 +27,8 @@ PV = exports.REVIEW.parent
 import camera_media as camera
 import extra_footage
 import deployment
+from drive_consolidation import mounted_path, require_ready
+from relocated_completion import merge_completed
 import numbering
 import wve_safety as reliability
 from contextlib import ExitStack
@@ -43,6 +45,7 @@ CAMERA_ROTATION_QUALIFIED = False
 
 
 def configure_production():
+    require_ready()
     global MANAGER_ROOT, DRIVE_PROOF, CAMERA_AUDIT, CAMERA_ROTATION_QUALIFIED
     MANAGER_ROOT, config = deployment.locate()
     extra_footage.ROOT = deployment.under(MANAGER_ROOT.parent,config['extra_footage'])
@@ -211,15 +214,16 @@ def reconciled_keep():
             continue
         source = prior.get(expected['path'],{})
         folder = MANAGER_ROOT.parent/'Keep'/('1080p' if role=='Master' else '720p')
-        path = folder/(group['label']+'.mp4')
+        legacy_path = folder/(group['label']+'.mp4')
+        path, expected_stamp = mounted_path(MANAGER_ROOT.parent, legacy_path, role, expected['sha256'], expected['signature'])
         ids = tuple(group['ordered_identities'])
         # An expired proof or a missing former publication must hold, never reopen work.
         claims.setdefault(ids,{})[role] = str(path)
-        record = live.get(path,{})
+        record = live.get(legacy_path,{})
         if (source.get('id') and source['id']==record.get('id') and record.get('parent_id')
                 and source.get('sha256')==expected['sha256']==record.get('sha256')
                 and source.get('size')==record.get('size')==expected['signature'][0]
-                and path.is_file() and exports.draft.source_stamp(path)==expected['signature']):
+                and path.is_file() and exports.draft.source_stamp(path)==expected_stamp):
             known.setdefault(ids,{})[role] = dict(path=str(path),sha256=record['sha256'],
                             signature=exports.draft.source_stamp(path),method='Relocated Google Drive server object and SHA-256')
     return known,claims
@@ -251,6 +255,7 @@ def weekly_publications():
                     known.setdefault(tuple(item['identities']),{}).setdefault(role,dict(
                         path=str(path),signature=record['signature'],method='Verified Weekly Vlog Export receipt'))
                     versions.setdefault(date,set()).add(role)
+    merge_completed(MANAGER_ROOT, exports.draft.source_stamp, known, versions)
     return known,versions
 
 

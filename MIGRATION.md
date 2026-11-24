@@ -7,3 +7,9 @@ Before renaming a live workspace, stop the controller, verify the CapCut native 
 Treat stale paths in older receipts as historical evidence. Rebind in a separate checkpoint or reconciliation record while preserving the originals. Never rely on rename as evidence that old local or cloud receipts still establish the current destination.
 
 A branded release and documentation folder can coexist with a legacy active workspace. Keep a single writable ledger and bind the launcher to the existing workspace with a local environment override. Keep archived installs and their original packages outside the public repository. Before rollback, close any active controller, preserve its journals, and check the older release against the same active ledger. Review any pending jobs before rendering.
+
+## Preserve both completion migrations
+
+A migrated archive can carry two private bindings in `%LOCALAPPDATA%/VlogSync`. `completion-migration-v1.json` seals the original production plan and server-verified publication receipts. `drive-organization-v1.json` binds those and earlier verified pairs to their permanent Drive paths without rewriting their historical receipts. Back up both bindings with the original plans, receipts and single numbering ledger. Keep private bindings and object IDs outside Git.
+
+Before qualifying a future release, run `python -B -m unittest test_completion_migrations` alongside the normal suite. Test a clean workspace and a representative migrated workspace. Reconcile saved identities to all existing pairs, confirm the next ledger number, and verify that a missing or changed destination holds before any submission. Never reset the archive ledger or use test defaults on a migrated workspace. Keep the previous working binary and its private migration bundle available for rollback.
