@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from uuid import uuid4
 
-VERSION = '1.1.0-rc3'
+VERSION = '1.1.0-rc4'
 MARGIN = 12*1024**3
 
 

@@ -190,7 +190,7 @@ class CapCut:
 
     def open_draft(self, name):
         result_title = 'Export-'+name
-        if not self.windows(result_title):
+        def select():
             screen = self.navigate_home()
             hits = self.home_row(screen, name)
             if len(hits)>1:
@@ -200,16 +200,26 @@ class CapCut:
             else:
                 screen, point = self.search(name)
             screen.click(point, double=True)
+        if not self.windows(result_title):
+            select()
+        dismissed=False
         def opened():
+            nonlocal dismissed
             if (self.exporter.ROOT/name/'.locked').is_file():
                 return True
             if self.windows(result_title):
                 result = self.dialog(result_title)
-                if result.matches('Open folder') and result.matches('Open draft'):
+                if self.finished(result):
                     area = Box(result.bounds.w//2,result.bounds.h-112,result.bounds.w//2,112)
-                    result.click(result.button('Open draft',area).center)
-                    return wait_for(lambda: (self.exporter.ROOT/name/'.locked').is_file(),
+                    action=result.enlarged_matches('Open draft',area,scale=2)
+                    if len(action)==1:
+                        result.click(action[0].center)
+                        return wait_for(lambda: (self.exporter.ROOT/name/'.locked').is_file(),
                                     f'project lock after reopening the completed result for {name}',seconds=20)
+                    if not dismissed:
+                        dismissed=True
+                        self.return_home(result)
+                        select()
             return None
         wait_for(opened,f'project lock or completed result for {name}',seconds=20)
         def editor():
@@ -227,8 +237,19 @@ class CapCut:
 
     def editor_for(self, screen, name):
         locks = [candidate.parent.name for candidate in self.exporter.ROOT.glob('*/.locked')]
-        return (locks == [name] and screen.matches('Menu',area=Box(0,0,screen.bounds.w,65))
-                and screen.matches('Player-Timeline',prefix=True))
+        if locks!=[name]:
+            return False
+        header=Box(0,0,screen.bounds.w,65)
+        identity=screen.matches(name,area=header) or screen.matches('Menu',area=header)
+        if not identity:
+            identity=screen.enlarged_matches(name,header,scale=2)
+        if not identity:
+            return False
+        player=screen.matches('Player-Timeline',prefix=True)
+        if not player:
+            player=screen.enlarged_matches('Player-Timeline 01',
+                          Box(0,0,screen.bounds.w, min(160,screen.bounds.h)),scale=2)
+        return bool(player)
 
     def navigate_home(self):
         def open_home():

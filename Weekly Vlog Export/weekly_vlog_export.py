@@ -21,16 +21,10 @@ HOME = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOME.parent/'CapCut Test 3'))
 import run_capcut_test3 as exports
 from capcut_ui import CapCut
-from desktop_controls import Box, WinOcr
+from desktop_controls import Box, WinOcr, pid, process_image
 
 PV = exports.REVIEW.parent
-sys.path.insert(0, str(PV/'app'))
-import vlog_core as camera
-import weekly_camera as grouping
-import editor_proxy
-import cloud_delivery
-import cloud_status
-import local_metadata
+import camera_media as camera
 import extra_footage
 import deployment
 import numbering
@@ -94,7 +88,8 @@ def verify_idle_renderer(*, allow_capcut_previews=True, qualification_readers=Fa
     if '"ffmpeg.exe"' in out.stdout.casefold():
         if not only_capcut_previews(allow_capcut_previews,qualification_readers):
             raise RuntimeError('An FFmpeg renderer is already active. Finish or pause the other job.')
-    session = exports.draft.read(PV/'processing-session.json')
+    legacy=Path(os.environ['LOCALAPPDATA'])/'Programs'/'Process Vlogs 3.7.1'/'processing-session.json'
+    session=camera.read_json(legacy,{})
     if session.get('status') == 'running':
         raise RuntimeError('The Process Vlogs journal reports processing is active. Leave it paused.')
 
@@ -120,7 +115,7 @@ def only_capcut_previews(allow_previews=True,qualification_readers=False):
     for row in children:
         command = (row.get('CommandLine') or '').replace('\\','/').casefold()
         if (qualification_readers and row['ParentProcessId'] in auditors
-                and Path(row.get('ExecutablePath') or '')==exports.PROBE.with_name('ffmpeg.exe')
+                and Path(row.get('ExecutablePath') or '')==exports.FFMPEG
                 and re.search(r' -f (rawvideo|s16le) "?pipe:1"?\s*$',command)):
             continue
         if (not allow_previews or Path(row.get('ExecutablePath') or '')!=app/'ffmpeg.exe' or row['ParentProcessId'] not in parents
@@ -136,83 +131,17 @@ def camera_path():
     return matches[0]
 
 
-def publication_stamp(path, expected):
-    """The virtual G: file ID may change across mounts; require the other fields."""
-    if not isinstance(expected,list) or len(expected)!=5:
-        return False
-    actual = cloud_delivery.signature(path)
-    return actual == expected or (cloud_status.provider(path)=='Google Drive'
-           and actual[:3]==expected[:3] and actual[4]==expected[4])
-
-
-def published_outputs(config, proof=None):
-    """Return independently qualified outputs keyed by the ordered source identities."""
-    known = {}
-    claims = {}
-    if proof is None:
-        proof = camera.read_json(DRIVE_PROOF,{})
-    remote = {publication_path(path):record for path,record in proof.get('files',{}).items()}
-    if not 0<=time.time()-proof.get('observed',0)<86400:
-        remote = {}
-    roots = [(config,None)]
-    roots += [(dict(config, output_folder=r['masters'],
-                    editor_proxy=dict(config['editor_proxy'],output_folder=r['proxies'])),r)
-              for r in config.get('reference_exports',[])]
-    device = camera.read_json(PV/'device.json',{}).get('id')
-    for cfg,reference in roots:
-        master, proxy = publication_path(cfg['output_folder']), publication_path(cfg['editor_proxy']['output_folder'])
-        for record in (master/'.vlog-merger'/'receipts').glob('*.json'):
-            receipt = receipt_readonly(record)
-            if receipt.get('status')!='verified-local-copy':
-                continue
-            name = receipt.get('output', '')
-            receipt_id = receipt.get('id','')
-            if (not name or Path(name).name != name or receipt_id!=record.stem or
-                    publication_path(receipt.get('destination',''))!=master or
-                    (reference and (receipt_id!=reference['id'] or name!=reference['output']))):
-                continue
-            clips = receipt.get('clips',[])
-            if not clips or not all(c.get('identity') for c in clips):
-                continue
-            sources = tuple(c['identity'] for c in clips)
-            original, small = master/name, proxy/name
-            key = hashlib.sha256(name.encode()).hexdigest()+'.json'
-            proxy_receipt = receipt_readonly(proxy/'.vlog-merger'/'proxy-receipts'/key)
-            v = receipt.get('verification',{})
-            qualified_master = v.get('full_decode_passed') is True and v.get('destination_sha256_verified') is True
-            qualified_proxy = (publication_path(proxy_receipt.get('master',''))==original
-                    and publication_path(proxy_receipt.get('proxy',''))==small
-                    and proxy_receipt.get('master_sha256')==receipt.get('output_sha256')
-                    and editor_proxy.completed_profile(proxy_receipt,receipt,
-                        editor_proxy.profile(editor_proxy.settings(cfg))))
-            certificate = camera.read_json(PV/'cloud-delivery'/(receipt_id+'.json'),{})
-            certified = (certificate.get('complete') and certificate.get('scope')=='local-publication-v1'
-                         and device and certificate.get('device')==device)
-            for role,path,paper,digest,qualified in (
-                    ('Master',original,receipt,receipt.get('output_sha256'),qualified_master),
-                    ('Proxy',small,proxy_receipt,proxy_receipt.get('proxy_sha256'),qualified_proxy)):
-                if not path.is_file():
-                    continue
-                claims.setdefault(sources,{}).setdefault(role,[]).append(str(path))
-                if not (qualified and isinstance(digest,str) and re.fullmatch(r'[a-f0-9]{64}',digest)):
-                    continue
-                stat = path.stat()
-                if role=='Proxy' and stat.st_size!=paper.get('bytes'):
-                    continue
-                cloud = remote.get(path,{})
-                method = None
-                if (cloud.get('sha256')==digest and cloud.get('size')==stat.st_size
-                        and cloud.get('id') and cloud.get('parent_id')):
-                    method = 'Google Drive server SHA-256'
-                elif publication_stamp(path,paper.get('published_signature')):
-                    method = 'verified publication signature'
-                elif certified and any(publication_path(row.get('path',''))==path and row.get('sha256')==digest
-                           and publication_stamp(path,row.get('signature')) for row in certificate.get('files',[])):
-                    method = 'verified legacy delivery certificate'
-                if method:
-                    known.setdefault(sources,{}).setdefault(role,dict(path=str(path),sha256=digest,
-                        signature=[stat.st_size,stat.st_mtime_ns],method=method))
-    return known, claims
+def published_outputs(config,proof=None):
+    """Retain legacy claims. Reuse only separately reconciled Keep or native receipts."""
+    claims={}
+    for folder in publication_folders(config)['Master']:
+        for path in (folder/'.vlog-merger'/'receipts').glob('*.json'):
+            receipt=receipt_readonly(path)
+            ids=tuple(c.get('identity') for c in receipt.get('clips',[]))
+            name=receipt.get('output','')
+            if ids and all(ids) and Path(name).name==name:
+                claims[ids]={role:[name] for role in exports.ROUND}
+    return {},claims
 
 
 def prior_pairs(config, uncertain=None):
@@ -224,8 +153,11 @@ def prior_pairs(config, uncertain=None):
 
 
 def publication_folders(config):
-    folders = {'Master': {publication_path(config['output_folder'])},
-               'Proxy': {publication_path(config['editor_proxy']['output_folder'])}}
+    folders = {'Master': set(), 'Proxy': set()}
+    if config.get('output_folder'):
+        folders['Master'].add(publication_path(config['output_folder']))
+    if config.get('editor_proxy',{}).get('output_folder'):
+        folders['Proxy'].add(publication_path(config['editor_proxy']['output_folder']))
     for reference in config.get('reference_exports',[]):
         for role,key in (('Master','masters'),('Proxy','proxies')):
             folders[role].add(publication_path(reference[key]))
@@ -324,21 +256,19 @@ def weekly_publications():
 
 def receipt_readonly(path):
     try:
-        current = path.stat(follow_symlinks=False)
-        if getattr(current,'st_file_attributes',0) & local_metadata.RECALL:
-            cached = camera.read_json(local_metadata.cache_file(path),{})
-            if local_metadata.identity(cached.get('source',''))==local_metadata.identity(path):
-                if cached.get('stamp')==[current.st_size,current.st_mtime_ns]:
-                    return cached.get('value',{})
+        current=path.stat(follow_symlinks=False)
+        # Do not hydrate an offline legacy receipt or implicitly trust it for reuse.
+        if current.st_size>2097152 or getattr(current,'st_file_attributes',0)&0x441000:
             return {}
-        return local_metadata.resident_json(path)
-    except (ValueError, OSError):
+        exports.draft.check_path(path)
+        return camera.read_json(path,{})
+    except (ValueError,OSError,RuntimeError):
         return {}
 
 
 def choose_groups(folder, args):
-    review = exports.draft.read(exports.REVIEW)
-    cfg = exports.draft.read(PV/'settings.json')
+    review = camera.read_json(exports.REVIEW,{'groups':[]})
+    cfg = camera.read_json(MANAGER_ROOT/'Configuration'/'recording.json',{}) if MANAGER_ROOT else {}
     saved = {g['vlog_date']: g for g in review['groups']}
     if len(saved) != len(review['groups']):
         raise RuntimeError('Multiple saved groups use one vlog date. Review that date before exporting.')
@@ -356,7 +286,7 @@ def choose_groups(folder, args):
                   and included(dt.date.fromisoformat(p.name[4:12]).isoformat())]
     new = [camera.parse_clip(p, ffprobe=str(exports.PROBE), cfg=cfg) for p in candidates]
     held = [(day,'A saved source is missing or its identity has changed') for day in sorted(changed_saved) if included(day)]
-    for group in grouping.daily_groups(new):
+    for group in camera.daily_groups(new):
         day = group.clips[0].start.date().isoformat()
         if not included(day):
             held.append((day, 'Camera timestamp correction moved a recording outside the requested dates'))
@@ -647,11 +577,11 @@ def queue_round(plan, ui, state, journal, kind, test):
         if (jobs.get(day,{}).get('state') in ('triggered','queued','complete') and ui.windows(name)):
             if jobs[day]['state']=='complete':
                 observed = ui.dialog(name)
-                if not observed.matches('Open folder'):
+                if not ui.finished(observed):
                     continue  # The next round may already have this project's setup dialog open.
             screen = ui.queued(None, name)
             path = exports.target(day,kind)
-            if screen.matches('Open folder'):
+            if ui.finished(screen):
                 output_info(path,kind,item)
             if jobs[day]['state'] != 'complete':
                 jobs[day]['state'] = 'queued'
@@ -660,6 +590,7 @@ def queue_round(plan, ui, state, journal, kind, test):
             event(f'Recovered the open native progress dialog for {kind} {day}')
             ui.return_home(screen)
             break
+    recover_closed_native(plan,ui,state,journal,kind)
     reconcile_native(plan, ui, jobs, kind)
     durations = {item['date']:item['duration_us']/1e6 for item in plan['projects']}
     # A native submission may wait behind several long projects. Bound the round
@@ -668,6 +599,7 @@ def queue_round(plan, ui, state, journal, kind, test):
     expires = time.monotonic()+max(6*3600,required_time+3600)
     while time.monotonic() < expires:
         camera_check(plan)
+        recover_closed_native(plan,ui,state,journal,kind)
         previous = sum(row['state'] in ('complete','failed') for row in jobs.values())
         count = reconcile(plan, kind, jobs, seen)
         terminal = sum(jobs.get(item['date'],{}).get('state') in ('complete','failed')
@@ -718,10 +650,15 @@ def queue_round(plan, ui, state, journal, kind, test):
                 exports.confirm_export(day,kind,retry=retry and (exports.RUN/f'{day}-{kind}-trigger.json').exists())
                 screen = ui.queued(screen, 'Export-'+todo['title'])
                 jobs[day]['state'] = 'queued'
+                jobs[day]['native_pid'] = pid(screen.window)
                 state['max_outstanding'][kind] = max(state['max_outstanding'][kind], outstanding+1)
                 save(journal, state)
                 event(f'{kind} {day}: CapCut accepted submission, {outstanding+1} outstanding')
-                ui.return_home(screen)
+                try:
+                    ui.return_home(screen)
+                except RuntimeError:
+                    if not recover_closed_native(plan,ui,state,journal,kind):
+                        raise
                 continue
         ordered = sorted((row['submitted'],day) for day,row in jobs.items() if 'submitted' in row)
         deadline = 0
@@ -731,6 +668,26 @@ def queue_round(plan, ui, state, journal, kind, test):
                 raise RuntimeError(f'The native {kind} submission for {day} exceeded its bounded queue time')
         time.sleep(4)
     raise RuntimeError('The round exceeded its bounded waiting time')
+
+
+def recover_closed_native(plan,ui,state,journal,kind):
+    candidates=[(day,row) for day,row in state['rounds'][kind].items()
+                if row['state']=='queued' and not row.get('retry_count')
+                and row.get('native_pid') and process_image(row['native_pid']) is None
+                and not exports.target(day,kind).exists()]
+    if not candidates:
+        return False
+    if len(candidates)!=1:
+        raise RuntimeError('Multiple lost native submissions need operator reconciliation')
+    flag=camera.read_json(journal.with_name('control.json'),{}).get('request')
+    if flag in ('pause','cancel'):
+        raise RuntimeError('The controller is paused; recover the lost native job on explicit resume')
+    day,row=candidates[0]
+    if not ui.windows('CapCut'):
+        ui.launch()
+    from crash_recovery import recover_verified_exit
+    recover_verified_exit(sys.modules[__name__],ui,plan,state,journal,kind,day,row['native_pid'])
+    return True
 
 
 def pairs(plan, state):

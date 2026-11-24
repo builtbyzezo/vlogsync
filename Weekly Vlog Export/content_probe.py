@@ -50,7 +50,7 @@ def compare_pair(weekly,item,state):
     existing = state.get('content_evidence',{}).get(day,{})
     if existing.get('signatures')==expected and existing.get('identities')==item['identities']:
         return
-    binary = weekly.exports.PROBE.with_name('ffmpeg.exe')
+    binary = weekly.exports.FFMPEG
     cursor = 0.0
     for source,identity in zip(item['sources'],item['identities'],strict=True):
         path = Path(source['path'])

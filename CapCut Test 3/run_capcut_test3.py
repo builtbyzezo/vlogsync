@@ -17,8 +17,10 @@ import create_capcut_draft as draft
 
 LOCAL=Path(os.environ['LOCALAPPDATA'])
 ROOT=LOCAL/'CapCut/User Data/Projects/com.lveditor.draft'
-REVIEW=LOCAL/'Programs/Process Vlogs 3.7.1/review-session.json'
-PROBE=LOCAL/'Programs/Process Vlogs 3.7.1/app/bin/ffprobe.exe'
+REVIEW=LOCAL/'VlogSync'/'review-session.json'
+BIN=os.environ.get('VLOGSYNC_FFMPEG_BIN')
+PROBE=Path(BIN)/'ffprobe.exe' if BIN else Path(shutil.which('ffprobe.exe') or 'ffprobe.exe')
+FFMPEG=Path(BIN)/'ffmpeg.exe' if BIN else Path(shutil.which('ffmpeg.exe') or 'ffmpeg.exe')
 CAPCUT=LOCAL/'CapCut/Apps/CapCut.exe'
 OUTPUT=Path.home()/'Videos/CapCut Test 3 Exports'
 RUN=HERE/'Run 3'

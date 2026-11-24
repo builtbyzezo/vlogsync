@@ -5,7 +5,7 @@ import os
 import subprocess
 from zoneinfo import ZoneInfo
 
-import vlog_core as camera
+import camera_media as camera
 
 
 ROOT = Path.home()/'Videos'/'Extra Footage'

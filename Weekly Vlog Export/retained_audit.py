@@ -144,13 +144,13 @@ def main():
                         at=comparison['seconds']
                         if not comparison['picture_match'] and 'picture_followup' not in comparison:
                             try:
-                                comparison['picture_followup']=picture_followup(w.exports.PROBE.with_name('ffmpeg.exe'),
+                                comparison['picture_followup']=picture_followup(w.exports.FFMPEG,
                                                                  path,outputs[role],at,cursor+at)
                                 master=next((p for p in previous_clip['roles'].get('Master',[])
                                              if p['seconds']==at),{})
                                 if (role=='Proxy' and master.get('picture_match')
                                         and not comparison['picture_followup']['passed']):
-                                    probe=w.exports.PROBE.with_name('ffmpeg.exe')
+                                    probe=w.exports.FFMPEG
                                     a=content.read(probe,outputs['Master'],cursor+at,True)
                                     b=content.read(probe,outputs['Proxy'],cursor+at,True)
                                     if a and len(a)==len(b):
@@ -161,7 +161,7 @@ def main():
                                 comparison['picture_followup']=dict(passed=False,error=str(error))
                         if comparison['audio_match'] is False and 'audio_followup' not in comparison:
                             try:
-                                comparison['audio_followup']=audio_followup(w.exports.PROBE.with_name('ffmpeg.exe'),
+                                comparison['audio_followup']=audio_followup(w.exports.FFMPEG,
                                                                  path,outputs[role],at,cursor+at)
                             except (OSError,RuntimeError,subprocess.SubprocessError) as error:
                                 comparison['audio_followup']=dict(passed=False,error=str(error))
@@ -175,7 +175,7 @@ def main():
                     reliability.atomic(target,report)
                     raise RuntimeError('Audit stopped at the disk reserve. Earlier samples preserved.')
                 try:
-                    comparisons=sample(w.exports.PROBE.with_name('ffmpeg.exe'),path,outputs,cursor,duration)
+                    comparisons=sample(w.exports.FFMPEG,path,outputs,cursor,duration)
                     passed=all(all(p['picture_match'] and p['audio_match'] is not False for p in samples)
                                for samples in comparisons.values())
                     row['clips'][path.name]=dict(identity=clip['identity'],offset_seconds=cursor,

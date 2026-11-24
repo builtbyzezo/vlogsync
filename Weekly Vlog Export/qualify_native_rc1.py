@@ -31,7 +31,7 @@ def main():
     w.exports.RUN=root
     w.exports.PLAN=root/'plan.json'
     w.exports.OUTPUT=root/'Disposable exports'
-    tool=w.exports.PROBE.with_name('ffmpeg.exe')
+    tool=w.exports.FFMPEG
     items=[]
     for i,(day,title) in enumerate(zip(DAYS,('WVE Scale One','WVE Scale Two') if scaled else TITLE,strict=True)):
         name=f'VID_{day.replace("-","")}_090000_{100+i}.mp4'

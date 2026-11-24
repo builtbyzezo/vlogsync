@@ -62,6 +62,29 @@ class FilesystemTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_native_recovery_rejects_present_pid_when_image_query_cannot_verify_it(self):
+        import crash_recovery as recovery
+        response=subprocess.CompletedProcess([],0,stdout='"CapCut.exe","123"')
+        with (patch.object(recovery,'process_image',return_value=None),
+              patch.object(recovery.subprocess,'run',return_value=response)):
+            with self.assertRaisesRegex(RuntimeError,'PID is still present'):
+                recovery.recover_verified_exit(None,None,None,None,None,'Master','2026-01-01',123)
+
+    def test_fresh_workspace_has_own_zero_ledger(self):
+        import numbering
+        from setup_vlogsync import install
+        with tempfile.TemporaryDirectory() as folder:
+            root=install(Path(folder)/'VlogSync',0,None,'UTC')
+            self.assertEqual(numbering.status(numbering.read(root/'Configuration'/'numbering.json'))['next_number'],1)
+            with self.assertRaises(FileExistsError):
+                install(root,0,None,'UTC')
+
+    def test_new_controller_uses_title_and_no_existing_process_vlogs_adapter(self):
+        import sys
+        import weekly_vlog_export as w
+        self.assertEqual(w.camera.__name__,'camera_media')
+        self.assertFalse({'vlog_core','weekly_camera','editor_proxy','cloud_delivery','cloud_status','local_metadata'} & sys.modules.keys())
+
     def test_clean_boot_uses_candidate_module(self):
         subprocess.run(['python','-B','-c',
                         'import weekly_vlog_export as w; import content_probe, filesystem_delivery; assert w.reliability.__name__=="wve_safety"'],
@@ -168,7 +191,7 @@ class SafetyTests(unittest.TestCase):
 
     def test_small_media_discrepancies(self):
         import weekly_vlog_export as weekly
-        ffmpeg = weekly.exports.PROBE.with_name('ffmpeg.exe')
+        ffmpeg = weekly.exports.FFMPEG
         with tempfile.TemporaryDirectory() as location:
             base = Path(location)
             normal, black, dark = (base/(name+'.mp4') for name in ('normal','black','dark'))
