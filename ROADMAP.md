@@ -2,12 +2,8 @@
 
 ## Phase 1
 
-Finish unattended crash recovery and desktop/power qualification. Maintain the independent camera adapter and separately installed CapCut and FFmpeg contracts. Keep previously verified releases available for rollback.
+Version 1.1.0 completes Phase 1 on the qualified Windows laptop. Preserve the standalone camera adapter, previous rollback, and production safety guards. A second Windows computer requires device and installation preflight before use. Ambiguous multi-job recovery remains a manual review.
 
 ## Phase 2
 
-A separate HTML operation panel with explicit controller actions. Device connection can open the panel but must not start exports automatically. Editor and publishing workflows are separate.
-
-RC4 owns the camera adapter. Continue validating installations against clean CapCut templates, retain the previous rollback, and complete native crash and shutdown gates before stable promotion.
-
-RC4 qualification covers unattended recovery for one verified abandoned native job on the qualified CapCut build at 100% scale. Multi-job ambiguity still requires operator reconciliation. Validate the setup on an additional Windows system before broad deployment.
+A separate HTML operation panel with explicit controller actions. Connecting a device can open the panel and will require operator approval to start exports. Editor and publishing workflows are separate. Phase 2 has not started.

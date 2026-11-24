@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+Promotes the qualified rc4 pipeline on the tested Windows laptop. Records clean extraction, single-job unattended crash recovery, the complete native export cycle at 100% scaling, and supervised sleep and shutdown. Retains 1.0.3 for rollback. Ambiguous multi-job recovery still requires manual review.
+
 ## 1.1.0-rc3 public source
 
 Introduces VlogSync branding, supervised restart and retry controls, filesystem-only publication, content checks and guarded power actions. The first public history contains a sanitized source baseline.
