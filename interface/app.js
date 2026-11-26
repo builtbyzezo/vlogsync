@@ -6,6 +6,8 @@ const labels = {ready:"Ready", scanning:"Scanning", review:"Review ready", proce
   cancelled:"Cancelled", complete:"Complete", error:"Needs attention", interrupted:"Needs reconciliation"};
 let current;
 let sending = false;
+let connected = false;
+let refreshSequence = 0;
 let noticeTimer;
 let tab = "import";
 
@@ -17,12 +19,22 @@ function notice(message) {
 }
 
 async function request(path, data) {
-  const response = await fetch("/api/" + path, {
-    method: data ? "POST" : "GET",
-    headers: {"X-VlogSync":token, ...(data ? {"Content-Type":"application/json"} : {})},
-    body: data ? JSON.stringify(data) : undefined
-  });
-  const value = await response.json();
+
+  let response;
+  try {
+    response = await fetch("/api/" + path, {
+      method: data ? "POST" : "GET",
+      headers: {"X-VlogSync":token, ...(data ? {"Content-Type":"application/json"} : {})},
+      body: data ? JSON.stringify(data) : undefined,
+      signal: AbortSignal.timeout(6000)
+    });
+  } catch {
+    throw Error(data ? "The controller did not confirm the action. Check Activity before trying again." :
+      "The local controller could not be reached. Open VlogSync from its shortcut.");
+  }
+  const value = await response.json().catch(() => null);
+  if (response.status===403) throw Error("This panel session is no longer valid. Reopen it from the VlogSync shortcut.");
+  if (!value) throw Error("The controller returned an unreadable response. Reopen VlogSync.");
   if (!response.ok) throw Error(value.error);
   return value;
 }
@@ -45,13 +57,14 @@ function switchTab(name) {
 }
 
 async function send(action, data={}) {
-  if (sending) return;
+  if (sending || !connected) return;
   sending = true;
   try {
     const response = await request(action,data);
     await refresh();
     return response;
   } catch (error) {
+    await refresh();
     notice(error.message);
   } finally {
     sending = false;
@@ -65,14 +78,14 @@ function item(text) {
 }
 
 function render(s) {
+  connected = true;
   current = s;
+  $("settings-open").disabled = false;
   const a = s.activity;
   const idle = ["ready","review","complete","error","cancelled"].includes(a.status);
   const camera = s.camera ? (a.status==="processing" || a.status==="scanning" ? "Camera in use" : "Camera connected") : "Camera disconnected";
   $("camera").lastChild.textContent = " "+camera;
   $("camera").classList.toggle("connected",s.camera);
-  $("last").textContent = "Vlog "+s.numbering.last_assigned.number;
-  $("last-date").textContent = s.numbering.last_assigned.recording_date ?? "";
   $("next").textContent = "Vlog "+s.numbering.next_number;
   $("scan").disabled = !s.camera || (!["ready","review","complete","error"].includes(a.status) || a.status==="error" && Boolean(a.run));
   $("edit-number").disabled = (!["ready","complete","error"].includes(a.status) || a.status==="error" && Boolean(a.run));
@@ -123,8 +136,29 @@ function render(s) {
   $("clearance").disabled = !idle;
 }
 async function refresh() {
-  try { render(await request("state")); }
-  catch (error) { $("activity-message").textContent=error.message; }
+  const sequence = ++refreshSequence;
+  try {
+    const state = await request("state");
+    if (sequence===refreshSequence) render(state);
+  } catch (error) {
+    if (sequence!==refreshSequence) return;
+    connected = false;
+    current = undefined;
+    $("status").className = "status offline";
+    $("status").textContent = "Controller unavailable";
+    $("activity-message").textContent = error.message+" A running operation may still be active.";
+    $("camera").lastChild.textContent = " Camera status unavailable";
+    $("camera").classList.remove("connected");
+    $("next").textContent = "—";
+    $("progress").hidden = true;
+    $("review").hidden = true;
+    const controls=$("controls");
+    controls.replaceChildren();
+    delete controls.dataset.key;
+    for (const id of ["scan","approve","edit-number","settings-open","settings-save","clearance"]) $(id).disabled=true;
+    for (const button of document.querySelectorAll("[data-folder]")) button.disabled=true;
+    for (const id of ["settings","number-dialog"]) if ($(id).open) $(id).close();
+  }
 }
 for (const name of ["import","export"]) $(name+"-tab").onclick=()=>switchTab(name);
 $("scan").onclick = ()=>send("scan");
@@ -145,15 +179,38 @@ $("settings-open").onclick=()=>{
   $("clearance-message").textContent="";
   const details=$("settings-details");
   details.replaceChildren();
-  for (const [label,value] of [["Camera","Insta360 · DCIM/Camera01"],["Extra Footage",current.folders.extra.path],
-      ["Masters",current.folders.master.path],["Proxies",current.folders.proxy.path],
-      ["Edited Videos",current.folders.edited.path],["Available workspace storage",current.free_gib+" GiB"],
-      ["Version",current.version]]) {
-    const dt=document.createElement("dt"), dd=document.createElement("dd");
-    dt.textContent=label;
-    dd.textContent=value;
-    details.append(dt,dd);
+  function card(label, value, detail, folder) {
+    const box=document.createElement(detail ? "details" : "div");
+    box.className="setting-card"+(detail ? "" : " setting-row");
+    const row=detail ? document.createElement("summary") : box;
+    const title=document.createElement("strong"), summary=document.createElement("span");
+    title.textContent=label;
+    summary.textContent=value;
+    row.append(title,summary);
+    if (detail) {
+      box.append(row);
+      const long=document.createElement("p");
+      long.className="path muted";
+      long.textContent=detail;
+      box.append(long);
+      if (folder) {
+        const open=button("Open folder",()=>send("folder",{key:folder}));
+        open.disabled=!current.folders[folder].available;
+        box.append(open);
+      }
+    }
+    details.append(box);
   }
+  card("Camera",current.camera ? "Connected" : "Disconnected","Insta360 · DCIM/Camera01");
+  for (const [name,key] of [["Extra Footage","extra"],["Masters","master"],["Proxies","proxy"],["Edited Videos","edited"]]) {
+    const folder=current.folders[key];
+    card(name,folder.available ? folder.path.split(/[\\/]/).pop() : "Unavailable",folder.path,key);
+  }
+  card("Export settings","1080p / 720p","1080p HEVC master and 720p H.264 proxy. Uses the native CapCut queue.");
+  card("Workspace storage",current.free_gib+" GiB free");
+  $("power-value").textContent=$("power").selectedOptions[0].textContent;
+  $("auto-value").textContent=$("auto-open").checked ? "On" : "Off";
+  $("version").textContent=current.version;
   $("settings").showModal();
 };
 $("settings-save").onclick=async()=>{
@@ -178,5 +235,8 @@ $("number-form").onsubmit=async event=>{
   if (await send("number",{number:$("number").valueAsNumber,date:$("date").value,confirm:true})) $("number-dialog").close();
 };
 if (fragment.get("view")==="export") switchTab("export");
-refresh();
-setInterval(refresh,2200);
+async function poll() {
+  await refresh();
+  setTimeout(poll,2200);
+}
+poll();
