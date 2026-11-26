@@ -6,4 +6,8 @@ Version 1.1.0 completes Phase 1 on the qualified Windows laptop. Preserve the st
 
 ## Phase 2
 
-A separate HTML operation panel with explicit controller actions. Connecting a device can open the panel and will require operator approval to start exports. Editor and publishing workflows are separate. Phase 2 has not started.
+A separate HTML operation panel with explicit controller actions. Connecting a device can open the panel and will require operator approval to start exports. Editor and publishing workflows are separate.
+
+## Phase 2 qualification
+
+The isolated panel candidate is available. Qualify its live adapter against one disposable camera/CapCut batch after Phase 1 recovery is verified. Confirm hardware attach, native interruption, publication, and operator-controlled power behavior before promotion. CapCut Space, edited video export and publishing remain planned.

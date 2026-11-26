@@ -23,7 +23,18 @@ def mounted_path(youtube, legacy, role, checksum, old_stamp):
         raise RuntimeError('Unknown Drive organization binding')
     key = legacy.relative_to(youtube).as_posix()
     row = state['files'][key]
-    relative = Path(ROLE_DIR[role], legacy.name)
+    final_name = legacy.name
+    if state.get('numbering_migration') == 1:
+        from numbering import read
+        direct = read(youtube / 'VlogSync' / 'Configuration' / 'numbering.json')
+        matched = [entry for entry in direct['assignments'] if entry['recording_date'] == row.get('recording_date')]
+        if (len(matched) != 1 or matched[0]['number'] != row.get('number')
+            or matched[0]['ordered_identity_sha256'] != row.get('ordered_identity_sha256')):
+            raise RuntimeError(f'Renumbered completion identity mismatch: {key}')
+        if type(row['number']) is not int or row['number'] <= direct['observed_through']:
+            raise RuntimeError('Unexpected number in the renumbering migration')
+        final_name = f'Vlog {row["number"]}.mp4'
+    relative = Path(ROLE_DIR[role], final_name)
     if row['path'] != relative.as_posix() or row['sha256'] != checksum or row['stamp'][0] != old_stamp[0]:
         raise RuntimeError(f'Drive organization identity mismatch: {key}')
     return youtube / relative, row['stamp']

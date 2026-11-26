@@ -13,3 +13,7 @@ Adds exact-title crop recognition, more robust export settings and bitrate readb
 ## 1.1.0-rc4
 
 Standalone camera and setup helpers remove Process Vlogs imports. The archive requires separately installed FFmpeg and CapCut. Adds a single fail-closed native crash retry and stronger window and completion recognition.
+
+## 1.2.0-rc1
+
+Added Import and Export tabs, review and activity views, folder access, settings, clearance and diagnostics. The adapter reuses the controller CLI and its journal. Reservation and execution accept a reviewed preview checksum. Simulated qualification is separate from the live workspace.

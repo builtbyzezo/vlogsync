@@ -63,3 +63,9 @@ On a failure, preserve the plan, queue, partial outputs and job receipts. Resolv
 Single-laptop scheduling and native rendering avoid another encoder and unnecessary media copies. Fail-closed guards are intentional where the UI or a native submission cannot be identified. Update the documentation, changelog and status, run tests in a clean checkout, and audit tracked files, history and ZIP entries before creating a tag. Use a release-candidate tag until qualification is complete. Publish only allowlisted source, docs, synthetic fixture generators, license notices and SHA-256 with the archive. Preserve the previous release independently.
 
 [Development instructions](AGENTS.md) · [Status](CURRENT_STATUS.md) · [Changes](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Migration](MIGRATION.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+## Phase 2 candidate
+
+Double-click `Open VlogSync Candidate.cmd` after extracting the complete package on Windows with Python 3.12. The local panel opens in the default browser with synthetic recordings and an isolated numbering ledger under `interface/Runs`. Import previews only scan the fixture in this mode. Approve explicitly to observe the simulated queue. Use the window that launched the server to stop it when finished.
+
+The candidate uses the existing controller for real preview, reserved numbering, CapCut queue controls, verification and filesystem publication. This interface was qualified with fixtures. A live workspace requires separate qualification and activation. Google Drive for desktop owns synchronization. The panel has no Drive authentication or upload service.

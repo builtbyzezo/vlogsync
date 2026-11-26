@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>VlogSync</title><link rel="stylesheet" href="/app.css"><script defer src="/app.js"></script></head>
+<body>
+<div class="shell">
+<header><div class="brand"><span class="mark" aria-hidden="true">▶</span> VlogSync</div><button class="gear" id="settings-open" aria-label="Settings" title="Settings">⚙</button></header>
+<nav aria-label="Workflow"><button id="import-tab" aria-pressed="true">Import</button><button id="export-tab" aria-pressed="false">Export</button></nav>
+<main>
+<section id="import-page" aria-labelledby="import-title">
+<div class="intro"><h1 id="import-title">Import vlogs</h1><p>Prepare your recordings for editing.</p></div>
+<div class="context"><div><strong id="camera"><span class="dot"></span> Checking camera</strong><button class="link" data-folder="extra">Open Extra Footage ↗</button></div><div><span class="muted">Last assigned</span><strong id="last">—</strong><span class="muted" id="last-date"></span></div><div><span class="muted">Next vlog</span><strong id="next">—</strong><button class="link" id="edit-number">Edit last number</button></div></div>
+<div class="actions">
+<button class="action primary" id="scan"><span class="action-icon" aria-hidden="true">↓</span><span><strong>Import Vlogs</strong><small>Create masters and editor proxies.</small></span><span class="tail" aria-hidden="true">→</span></button>
+<div class="action future"><span class="action-icon" aria-hidden="true">↑</span><span><strong>Upload to Editor</strong><small>Send prepared proxies to CapCut Space.</small></span><span class="tag">Phase 3</span></div>
+<div class="action future"><span class="action-icon" aria-hidden="true">⇄</span><span><strong>Import &amp; Upload</strong><small>Prepare and send vlogs in one operation.</small></span><span class="tag">Phase 3</span></div>
+</div></section>
+<section id="export-page" hidden aria-labelledby="export-title">
+<div class="intro"><h1 id="export-title">Export vlogs</h1><p>Editor and publishing tools will be available in later phases.</p></div>
+<div class="actions">
+<div class="action future"><span class="action-icon" aria-hidden="true">↓</span><span><strong>Sync CapCut Edited Vlogs</strong><small>Retrieve projects from your editor.</small></span><span class="tag">Phase 3</span></div>
+<div class="action future"><span class="action-icon" aria-hidden="true">✓</span><span><strong>Review &amp; Export</strong><small>Review edits and export final videos.</small></span><span class="tag">Phase 3</span></div>
+<div class="action future"><span class="action-icon" aria-hidden="true">↑</span><span><strong>Publish to YouTube</strong><small>Publish approved final videos.</small></span><span class="tag">Phase 4</span></div>
+</div></section>
+<section class="review" id="review" hidden aria-labelledby="review-title"><h2 id="review-title">Review import</h2><p id="review-info"></p><ul id="review-items"></ul><button class="solid" id="approve">Approve and prepare</button></section>
+<section class="activity" aria-labelledby="activity-title">
+<div class="activity-head"><h2 id="activity-title">Activity</h2><span class="status" id="status">Ready</span></div>
+<p id="activity-message" aria-live="polite">Connect your camera to get started.</p><progress id="progress" value="0" max="1" aria-label="Export steps completed" hidden></progress>
+<div class="controls" id="controls"></div>
+</section>
+</main>
+<footer><button data-folder="master">Masters ↗</button><button data-folder="proxy">Proxies ↗</button><button data-folder="edited">Edited Videos ↗</button><small id="mode"></small></footer>
+</div>
+<dialog id="settings"><form method="dialog"><div class="dialog-header"><h2>Settings</h2><button aria-label="Close settings">×</button></div></form>
+<div class="settings-body"><dl id="settings-details"></dl><p>Master 1080p HEVC · Proxy 720p H.264 · Native CapCut queue</p>
+<label>After a verified run <select id="power"><option value="none">Do nothing</option><option value="sleep">Sleep</option><option value="shutdown">Shut down</option></select></label>
+<label class="check"><input type="checkbox" id="auto-open"> Open when the camera connects</label>
+<p class="muted">Camera opening requires the optional local watcher. Power actions need confirmation for each live run.</p>
+<button class="outline" id="settings-save">Save preferences</button>
+<button class="outline" id="clearance">Check camera clearance</button><p id="clearance-message" aria-live="polite"></p>
+<p><a href="https://github.com/builtbyzezo/vlogsync" target="_blank" rel="noreferrer">VlogSync on GitHub ↗</a></p></div></dialog>
+<dialog id="number-dialog"><form method="dialog"><div class="dialog-header"><h2>Edit last assigned number</h2><button aria-label="Close number editor">×</button></div></form>
+<form class="settings-body" id="number-form"><label>Last assigned number <input type="number" min="0" max="999999" required id="number"></label><label>Recording date <input id="date" type="date" required></label><p>Existing vlog assignments are protected.</p><label class="check"><input type="checkbox" required> I checked this number and date.</label><button class="solid">Save number</button></form></dialog>
+<div id="notice" role="status" hidden></div>
+</body></html>

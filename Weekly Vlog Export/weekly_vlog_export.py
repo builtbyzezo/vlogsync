@@ -802,6 +802,8 @@ def run(args):
     try:
         lock.seek(0)
         msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        if getattr(args,'expect_review',None) and reliability.digest(PRODUCTION_PREVIEW)!=args.expect_review:
+            raise RuntimeError('The frozen preview changed after approval')
         verify_idle_renderer()
         if not args.qualification:
             for other in (HOME/'Runs').glob('Production-*'):
@@ -976,6 +978,7 @@ def main():
     parser.add_argument('--preview', action='store_true',help='Make a read-only production checklist without creating projects.')
     parser.add_argument('--ui-preflight', action='store_true',help='Check CapCut startup and export controls with no rendering.')
     parser.add_argument('--execute-preview',action='store_true',help='Render only the previously reviewed production preview.')
+    parser.add_argument('--expect-review',help=argparse.SUPPRESS)
     parser.add_argument('--after-success',choices=('sleep','shutdown'))
     parser.add_argument('--reserve-reviewed',action='store_true',help='Reserve numbers for the latest reviewed preview.')
     parser.add_argument('--numbering',action='store_true',help='Show the last assigned date and next vlog number.')
@@ -984,6 +987,8 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--shortcut', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.expect_review and not (args.reserve_reviewed or args.execute_preview):
+        parser.error('The frozen preview digest applies only to reserve or execute.')
     if args.after_success and not args.execute_preview:
         parser.error('--after-success requires --execute-preview.')
     if args.qualification and not re.fullmatch(r'Test [A-Za-z0-9][A-Za-z0-9 -]{0,30}',args.qualification):
@@ -1006,6 +1011,8 @@ def main():
             lock.seek(0)
             msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
             if args.reserve_reviewed:
+                if args.expect_review and reliability.digest(PRODUCTION_PREVIEW)!=args.expect_review:
+                    raise RuntimeError('The preview changed before reservation')
                 baseline = exports.draft.read(PRODUCTION_PREVIEW)
                 if baseline.get('mode')!='weekly' or Path(baseline.get('output',''))!=PRODUCTION_OUTPUT:
                     raise RuntimeError('A valid reviewed production preview is required before reservation')
@@ -1017,6 +1024,8 @@ def main():
             elif args.set_last_number:
                 ledger = numbering.read(ledger_path)
                 numbering.edit_anchor(ledger,int(args.set_last_number[0]),args.set_last_number[1])
+                from filesystem_delivery import check_numbers
+                check_numbers(sys.modules[__name__],{ledger['last_assigned']['number']+1})
                 save(ledger_path,ledger)
             print(json.dumps(numbering.status(numbering.read(ledger_path)),indent=2))
         code = 0
