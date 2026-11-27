@@ -22,7 +22,7 @@ sys.path.insert(0, str(ENGINE))
 import numbering
 from wve_safety import atomic, diagnostic
 
-VERSION = '1.2.1'
+VERSION = '1.2.2'
 ROLES = ('Master', 'Proxy')
 NAMES = {'extra':'Extra Footage','master':'1080p Master Vlogs',
          'proxy':'720p Editor Proxies','edited':'Edited Videos'}

@@ -222,7 +222,12 @@ $("clearance").onclick=async()=>{
   if (!response) { $("clearance-message").textContent="Clearance is unavailable."; return; }
   const r=response.result;
   $("clearance-message").textContent=[r.safe_to_disconnect?"Safe to disconnect":"Disconnect clearance unavailable",
-    r.safe_to_format?"Safe to format":"Format clearance unavailable",...(r.issues ?? [])].join(" · ");
+    r.safe_to_format?"Safe to format":"Format clearance unavailable",...(r.safe_to_disconnect || !r.disconnect_status ? [] : [r.disconnect_status]),
+    ...(r.issues ?? []),
+    ...[["missing","Missing recordings"],["changed","Changed recordings"],["extra","Uncovered recordings"],
+        ["missing_strong_content_proof","Missing content evidence"]]
+      .filter(([key])=>r[key]?.length).map(([key,label])=>label+": "+r[key].join(", "))
+  ].join(" · ");
 };
 $("edit-number").onclick=()=>{
   $("number-form").reset();

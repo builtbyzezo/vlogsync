@@ -1,5 +1,9 @@
 # Current status
 
+## 1.2.2 camera clearance
+
+Camera clearance reads retained content evidence from the workspace and follows verified output migrations and completed filesystem receipts. Disconnect holds while CapCut or an encoder remains active. Format holds for uncovered recordings or ancillary files. Current camera testing matched all retained recordings without exporting any footage.
+
 ## 1.2.1 production verification
 
 Restores an unambiguous minimized CapCut window before applying ordinary focus and project checks. Diagnostics include the failing stage, vlog numbers, queue and window state. The existing production run resumed once per output, verified matching picture, audio, timing and filesystem hashes, and restored the HEVC preset. No additional render was required for packaging.

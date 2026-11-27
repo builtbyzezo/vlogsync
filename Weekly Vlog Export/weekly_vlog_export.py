@@ -947,7 +947,7 @@ def run(args):
     except (OSError, RuntimeError, ValueError) as error:
         event(f'HELD: {error}')
         report = reliability.diagnostic(error,base.name)
-        report.update(operation=stage, controller='1.2.1',
+        report.update(operation=stage, controller='1.2.2',
                       vlog_numbers=[item['vlog_number'] for item in plan.get('projects',[])
                                     if item.get('vlog_number') is not None],
                       journal_exists=(base/'queue.json').is_file(),
