@@ -38,6 +38,8 @@ class CapCut:
     def current_window(self, name):
         candidates = self.windows(name)
         fg = user.GetForegroundWindow()
+        if name=='CapCut':
+            candidates = [h for h in candidates if (bounds := rect(h)).w >= 640 and bounds.h >= 480]
         if name=='CapCut' and len(candidates)>1:
             # Notifications share the main title. Separate them using relative area,
             # independent of the monitor resolution and Windows display scaling.
@@ -144,6 +146,20 @@ class CapCut:
                         break
         return rows
 
+    def project_open_point(self, screen, title_hit):
+        # The list title can accept focus without opening the project. Open the
+        # thumbnail in the same OCR-identified row when list columns are visible.
+        projects = screen.unique('Projects')
+        header = Box(projects.x, projects.y + projects.h, screen.bounds.w-projects.x,
+                     title_hit.y-projects.y-projects.h)
+        names = screen.matches('Name', area=header)
+        durations = screen.matches('Duration', area=header)
+        if len(names)==len(durations)==1:
+            column = names[0]
+            if projects.x < column.x <= title_hit.x and abs(column.y-durations[0].y) <= column.h:
+                return ((projects.x+column.x)//2, title_hit.center[1])
+        return title_hit.center
+
     def search(self, name):
         screen = self.home()
         for _ in range(2):
@@ -168,7 +184,7 @@ class CapCut:
         result = self.home()
         hits = self.home_row(result, name)
         if len(hits)==1:
-            return result,hits[0].center
+            return result,self.project_open_point(result,hits[0])
         if hits:
             raise RuntimeError('CapCut returned more than one matching title')
         # Some all-numeric titles are skipped by OCR. Navigate the single search
@@ -188,6 +204,22 @@ class CapCut:
         label = result.unique('Name',area=Box(300,duration.y-15,result.bounds.w//3,50))
         return result,(label.x+50,matched[0])
 
+    def dismiss_teams_promotion(self):
+        popup = user.GetForegroundWindow()
+        if popup not in self.windows('CapCut') or popup == self.current_window('CapCut'):
+            return
+        bounds = rect(popup)
+        if not (250 <= bounds.w <= 650 and 350 <= bounds.h <= 850):
+            return
+        screen = Screen(popup, self.ocr)
+        if not all(screen.matches(text) for text in ('CapCut', 'Teams', 'Upgrade to Teams', 'Empower your team')):
+            return
+        corner = Box(screen.bounds.w*4//5, 0, screen.bounds.w//5, screen.bounds.h//8)
+        close = screen.enlarged_matches('x', corner)
+        if len(close) == 1:
+            screen.click(close[0].center)
+            wait_for(lambda: user.GetForegroundWindow()!=popup, 'the CapCut Teams promotion to close')
+
     def open_draft(self, name):
         result_title = 'Export-'+name
         def select():
@@ -196,7 +228,7 @@ class CapCut:
             if len(hits)>1:
                 raise RuntimeError(f'Expected one exact CapCut row for {name}')
             if hits:
-                point = hits[0].center
+                point = self.project_open_point(screen,hits[0])
             else:
                 screen, point = self.search(name)
             screen.click(point, double=True)
@@ -223,6 +255,7 @@ class CapCut:
             return None
         wait_for(opened,f'project lock or completed result for {name}',seconds=20)
         def editor():
+            self.dismiss_teams_promotion()
             try:
                 observed = self.screen(self.get_window('CapCut'))
             except RuntimeError as error:
@@ -294,6 +327,7 @@ class CapCut:
     def export_dialog(self, entry):
         expected = 'Export-' + entry['title']
         if (self.exporter.ROOT/entry['title']/'.locked').exists():
+            self.dismiss_teams_promotion()
             if self.windows(expected):
                 return self.dialog(expected)
             editor = self.screen(self.get_window('CapCut'))

@@ -96,7 +96,7 @@ def main():
         return
     if not args.run or not re.fullmatch(r'Production-[a-f0-9]{16}',args.run):
         parser.error('Supply the exact local production run ID.')
-    base = weekly.HOME/'Runs'/args.run
+    base = weekly.RUN_ROOT/args.run
     if not (base/'plan.json').is_file():
         parser.error('The nominated local candidate run does not exist.')
     if args.action=='troubleshooting':

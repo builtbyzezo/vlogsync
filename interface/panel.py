@@ -22,7 +22,7 @@ sys.path.insert(0, str(ENGINE))
 import numbering
 from wve_safety import atomic, diagnostic
 
-VERSION = '1.2.0-rc1'
+VERSION = '1.2.0'
 ROLES = ('Master', 'Proxy')
 NAMES = {'extra':'Extra Footage','master':'1080p Master Vlogs',
          'proxy':'720p Editor Proxies','edited':'Edited Videos'}
@@ -42,13 +42,22 @@ def sealed(path):
 
 
 class Panel:
-    def __init__(self, root, live):
-        self.root, self.live = root.resolve(), live
+    def __init__(self, root, live, native_pilot=False):
+        self.root, self.live, self.native_pilot = root.resolve(), live or native_pilot, native_pilot
+        live=self.live
         self.state = self.root / 'panel-state.json'
         self.config = self.root / 'panel-settings.json'
         self.ledger = (self.root / 'Configuration' if live else self.root) / 'numbering.json'
         self.preview = ENGINE / 'production-preview.json' if live else self.root / 'preview.json'
         self.env = dict(os.environ, WEEKLY_VLOG_MANAGER_ROOT=str(self.root))
+        self.env.pop('VLOGSYNC_DISPOSABLE_NATIVE',None)
+        if native_pilot:
+            self.env['VLOGSYNC_DISPOSABLE_NATIVE']=str(self.root)
+            from panel_fixture import allowed
+            if not allowed(self.root):
+                raise ValueError('The native pilot requires its exact disposable workspace.')
+            self.preview = self.root/'production-preview.json'
+        self.runs = self.root/'Runs' if native_pilot else ENGINE/'Runs'
         self.mutex = threading.Lock()
         self.child = None
         if live:
@@ -66,7 +75,7 @@ class Panel:
                 (self.root/name).mkdir(exist_ok=True)
 
     def guard(self):
-        if self.live and (Path(os.environ['LOCALAPPDATA'])/'VlogSync/drive-organization-in-progress').exists():
+        if self.live and not self.native_pilot and (Path(os.environ['LOCALAPPDATA'])/'VlogSync/drive-organization-in-progress').exists():
             raise ValueError('The Phase 1 recovery hold is still active.')
 
     def folders(self):
@@ -97,9 +106,10 @@ class Panel:
         projects = [{k:i.get(k) for k in ('date','clips','vlog_number','external_count')}
                     | {'missing':[r for r in ROLES if r not in i.get('existing',{})]} for i in p.get('projects',[])]
         current = numbering.status(numbering.read(self.ledger))
-        if self.live and RUN.fullmatch(s.get('run','')):
-            queue = read(ENGINE/'Runs'/s['run']/'queue.json',{})
-            plan = read(ENGINE/'Runs'/s['run']/'plan.json',{})
+        run = s.get('run')
+        if self.live and isinstance(run,str) and RUN.fullmatch(run):
+            queue = read(self.runs/run/'queue.json',{})
+            plan = read(self.runs/run/'plan.json',{})
             s.update(journal_progress(plan,queue))
         issue = None
         if s['status'] in ('error','interrupted'):
@@ -110,7 +120,7 @@ class Panel:
         return dict(version=VERSION, demo=not self.live,camera=connected,activity=s,numbering=current,
                     projects=projects, held=[i[0] for i in p.get('held',[])],
                     review=s.get('review'),settings=settings,
-                    folders={key:{'path':str(path),'available':path.is_dir()} for key,path in folders.items()},
+                    native_pilot=self.native_pilot, folders={key:{'path':str(path),'available':path.is_dir()} for key,path in folders.items()},
                     free_gib=round(shutil.disk_usage(self.root).free/1024**3),
                     issue=issue)
 
@@ -133,7 +143,7 @@ class Panel:
                 os.startfile(report)
                 return
             if name=='clearance' and not busy:
-                if self.live:
+                if self.live and not self.native_pilot:
                     result = subprocess.run([sys.executable,'-B',str(ENGINE/'phase1_control.py'),'camera-assessment'],
                                             env=self.env,capture_output=True,text=True,timeout=600,creationflags=CREATE)
                     if result.returncode==0:
@@ -174,9 +184,9 @@ class Panel:
                 if any(not r['available'] for k,r in status['folders'].items() if k in ('master','proxy')):
                     raise ValueError('A publication destination is unavailable.')
                 power = status['settings'].get('power','none')
-                if self.live and power!='none' and data.get('confirm_power')!=power:
+                if self.live and not self.native_pilot and power!='none' and data.get('confirm_power')!=power:
                     raise ValueError('Confirm the power action for this run.')
-                return self.spawn('approve',{'review':status['review'],'power':power})
+                return self.spawn('approve',{'review':status['review'],'power':'none' if self.native_pilot else power})
             if name in ('resume','retry') and (mode=='paused' or name=='retry' and mode=='error') and activity.get('run'):
                 return self.spawn(name,dict(run=activity['run'],role=data.get('role'),date=data.get('date'),
                                             review=activity.get('review'),power='none'))
@@ -206,7 +216,7 @@ class Panel:
                            'message':'','run':payload.get('run')})
         try:
             self.child=subprocess.Popen([sys.executable,'-B',str(Path(__file__)), '--workspace',str(self.root),
-                                     *(['--live'] if self.live else []),'--worker',action,json.dumps(payload)],
+                                     *(['--native-pilot'] if self.native_pilot else ['--live'] if self.live else []),'--worker',action,json.dumps(payload)],
                                      cwd=HERE,creationflags=CREATE)
         except OSError:
             atomic(self.state,previous)
@@ -222,7 +232,9 @@ def journal_progress(plan, queue):
     active=[(i,r) for i in projects for r in ROLES
             if rounds.get(r,{}).get(i['date'],{}).get('state') in ('triggered','queued')]
     i,r=active[0] if active else ({},None)
-    pairs=sum(all(rounds.get(r,{}).get(i['date'],{}).get('state')=='complete' for r in ROLES) for i in projects)
+    delivery=queue.get('delivery',{})
+    pairs=sum(all(delivery.get(r,{}).get(i['date'],{}).get('transaction',{}).get('state')=='verified'
+                  for r in ROLES) for i in projects)
     return dict(done=count,total=2*len(projects),completed=pairs,remaining=len(projects)-pairs,
                 failed=len(failed),retryable=failed,vlog=i.get('vlog_number'),role=r)
 
@@ -307,15 +319,22 @@ def handler(panel, token):
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--workspace',type=Path,default=HERE/'Runs'/'Disposable panel')
+    p.add_argument('--workspace',type=Path)
     p.add_argument('--live',action='store_true')
+    p.add_argument('--native-pilot',action='store_true')
     p.add_argument('--no-browser',action='store_true')
     p.add_argument('--watch-camera',action='store_true')
     p.add_argument('--worker',nargs=2,help=argparse.SUPPRESS)
     a=p.parse_args()
+    if a.workspace is None:
+        if a.live:
+            from deployment import locate
+            a.workspace, _ = locate()
+        else:
+            a.workspace = HERE/'Runs'/'Disposable panel'
     if not a.live and not a.workspace.resolve().is_relative_to(HERE/'Runs'):
         p.error('Simulated workspaces must stay under interface/Runs.')
-    panel=Panel(a.workspace,a.live)
+    panel=Panel(a.workspace,a.live,a.native_pilot)
     if a.worker:
         return worker(panel,a.worker[0],json.loads(a.worker[1]))
     lock=panel.root/'panel.lock'

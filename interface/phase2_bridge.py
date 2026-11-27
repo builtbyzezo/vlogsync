@@ -44,7 +44,7 @@ def execute(panel, action, payload):
         result=command(panel,'phase1_control.py','resume',run)
         if result.returncode:
             raise ValueError('The existing controller could not release the pause.')
-    state.update(run=run,review=digest,operation='Preparing masters and proxies')
+    state.update(status='processing',run=run,review=digest,operation='Preparing masters and proxies',message='')
     atomic(panel.state,state)
     args=['--execute-preview','--expect-review',digest]
     if payload.get('power','none')!='none':
@@ -52,7 +52,7 @@ def execute(panel, action, payload):
     result=command(panel,cli,*args)
     if result.returncode==weekly.RESTART:
         result=command(panel,cli,*args)
-    base=ENGINE/'Runs'/run
+    base=panel.runs/run
     flag=read(base/'control.json',{}).get('request')
     queue=read(base/'queue.json',{})
     if queue.get('publication_finished') and result.returncode==0:

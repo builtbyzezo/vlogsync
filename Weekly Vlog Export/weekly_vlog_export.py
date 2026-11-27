@@ -40,14 +40,25 @@ DRIVE_PROOF = HOME/'drive-publication-evidence.json'
 CAMERA_AUDIT = HOME/'camera-reconciliation.json'
 PRODUCTION_PREVIEW = HOME/'production-preview.json'
 PRODUCTION_OUTPUT = Path.home()/'Videos'/'Weekly Vlog Export'/'Production'
+from panel_fixture import workspace as pilot_workspace
+PILOT_WORKSPACE = pilot_workspace()
+RUN_ROOT = (PILOT_WORKSPACE or HOME)/'Runs'
+if PILOT_WORKSPACE:
+    PRODUCTION_PREVIEW = PILOT_WORKSPACE/'production-preview.json'
+    PRODUCTION_OUTPUT = PILOT_WORKSPACE.parent/'Scratch'
+    exports.REVIEW = PILOT_WORKSPACE/'review-session.json'
 MANAGER_ROOT = None
 CAMERA_ROTATION_QUALIFIED = False
 
 
 def configure_production():
-    require_ready()
+    if not PILOT_WORKSPACE:
+        require_ready()
     global MANAGER_ROOT, DRIVE_PROOF, CAMERA_AUDIT, CAMERA_ROTATION_QUALIFIED
     MANAGER_ROOT, config = deployment.locate()
+    if PILOT_WORKSPACE and (MANAGER_ROOT != PILOT_WORKSPACE or config != {
+        'workspace':'weekly-vlog-export-disposable-pilot', 'extra_footage':'Extra Footage'}):
+        raise RuntimeError('Unexpected native pilot workspace configuration.')
     extra_footage.ROOT = deployment.under(MANAGER_ROOT.parent,config['extra_footage'])
     if not extra_footage.ROOT.is_dir():
         raise RuntimeError('The configured Extra Footage folder is unavailable')
@@ -128,6 +139,8 @@ def only_capcut_previews(allow_previews=True,qualification_readers=False):
 
 
 def camera_path():
+    if PILOT_WORKSPACE:
+        return PILOT_WORKSPACE.parent/'Camera01'
     matches = [p for p in camera.detect_camera_folders() if p.name.lower()=='camera01']
     if len(matches) != 1:
         raise RuntimeError('Expected exactly one connected Insta360 DCIM/Camera01 folder')
@@ -233,7 +246,7 @@ def weekly_publications():
     """Read prior completed production roles with a matching canonical path and file stamp."""
     known = {}
     versions = {}
-    histories = set((HOME/'Runs').glob('Production-*'))
+    histories = set(RUN_ROOT.glob('Production-*'))
     if MANAGER_ROOT:
         histories.update((MANAGER_ROOT/'Records'/'Runs').glob('Production-*'))
     for folder in sorted(histories):
@@ -255,7 +268,8 @@ def weekly_publications():
                     known.setdefault(tuple(item['identities']),{}).setdefault(role,dict(
                         path=str(path),signature=record['signature'],method='Verified Weekly Vlog Export receipt'))
                     versions.setdefault(date,set()).add(role)
-    merge_completed(MANAGER_ROOT, exports.draft.source_stamp, known, versions)
+    if not PILOT_WORKSPACE:
+        merge_completed(MANAGER_ROOT, exports.draft.source_stamp, known, versions)
     return known,versions
 
 
@@ -757,7 +771,13 @@ def reserve_numbered(first_plan):
     from filesystem_delivery import check_numbers
     numbers = sorted(item['vlog_number'] for item in plan['projects'] if item['vlog_number'] not in assigned)
     if numbers:
-        check_numbers(sys.modules[__name__],numbers)
+        if PILOT_WORKSPACE:
+            from filesystem_delivery import folders
+            for folder in folders(sys.modules[__name__]).values():
+                if any((folder/f'Vlog {n}.mp4').exists() for n in numbers):
+                    raise RuntimeError('A disposable destination already holds this number.')
+        else:
+            check_numbers(sys.modules[__name__],numbers)
     save(ledger_path,ledger)
     numbering.read(ledger_path)
     save(PRODUCTION_PREVIEW,plan)
@@ -791,7 +811,7 @@ def run(args):
         args.start,args.end = approved.get('first_date'),approved.get('last_date')
         key = hashlib.sha256(exports.draft.encode(reviewed_selection(approved))).hexdigest()[:16]
         suffix = 'Production-'+key
-    exports.RUN = HOME/'Runs'/suffix
+    exports.RUN = RUN_ROOT/suffix
     exports.RUN.mkdir(parents=True, exist_ok=True)
     exports.PLAN = exports.RUN/'plan.json'
     exports.OUTPUT = Path.home()/'Videos'/'Weekly Vlog Export'/suffix if args.qualification else PRODUCTION_OUTPUT
@@ -806,7 +826,7 @@ def run(args):
             raise RuntimeError('The frozen preview changed after approval')
         verify_idle_renderer()
         if not args.qualification:
-            for other in (HOME/'Runs').glob('Production-*'):
+            for other in RUN_ROOT.glob('Production-*'):
                 earlier = camera.read_json(other/'queue.json',{})
                 if other!=base and earlier and not earlier.get('publication_finished'):
                     raise RuntimeError(f'An earlier local run needs reconciliation: {other.name}')
@@ -989,6 +1009,8 @@ def main():
     args = parser.parse_args()
     if args.expect_review and not (args.reserve_reviewed or args.execute_preview):
         parser.error('The frozen preview digest applies only to reserve or execute.')
+    if args.after_success and PILOT_WORKSPACE:
+        parser.error('Power actions are disabled in the disposable pilot.')
     if args.after_success and not args.execute_preview:
         parser.error('--after-success requires --execute-preview.')
     if args.qualification and not re.fullmatch(r'Test [A-Za-z0-9][A-Za-z0-9 -]{0,30}',args.qualification):
@@ -1022,6 +1044,8 @@ def main():
                     raise RuntimeError('The latest sources or verified outputs no longer match the reviewed batch')
                 reserve_numbered(plan)
             elif args.set_last_number:
+                if PILOT_WORKSPACE:
+                    raise RuntimeError('The disposable ledger anchor is fixed.')
                 ledger = numbering.read(ledger_path)
                 numbering.edit_anchor(ledger,int(args.set_last_number[0]),args.set_last_number[1])
                 from filesystem_delivery import check_numbers

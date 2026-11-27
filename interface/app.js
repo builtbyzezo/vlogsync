@@ -99,7 +99,7 @@ function render(s) {
   $("progress").hidden = !a.total || !["processing","paused","complete","error"].includes(a.status);
   $("progress").max = a.total || 1;
   $("progress").value = a.done || 0;
-  $("mode").textContent = s.demo ? "Isolated demo · "+s.version : s.version;
+  $("mode").textContent = s.native_pilot ? "Disposable native pilot · "+s.version : s.demo ? "Isolated demo · "+s.version : s.version;
   $("review").hidden = tab!=="import" || a.status!=="review";
   if (a.status==="review") {
     $("review-info").textContent = s.projects.length ? "Confirm the dates and outputs below." : "No incomplete exports were found for this preview.";

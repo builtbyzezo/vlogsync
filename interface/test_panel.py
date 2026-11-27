@@ -57,6 +57,30 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.call('state',token='incorrect')[0],403)
         self.assertEqual(self.call('state')[1]['activity']['status'],'ready')
 
+    def test_live_review_handles_null_run(self):
+        root = self.panel.root
+        (root/'Configuration').mkdir()
+        from panel import VERSION, atomic
+        atomic(root/'Configuration'/'phase2-qualification.json', {'approved_version': VERSION})
+        atomic(root/'Configuration'/'numbering.json', json.loads(self.panel.ledger.read_bytes()))
+        with patch.object(Panel, 'guard'), patch('camera_media.detect_camera_folders', return_value=[]):
+            panel = Panel(root, True)
+            panel.preview = root/'preview.json'
+            atomic(panel.preview, {'projects': []})
+            atomic(panel.state, {'status': 'review', 'run': None})
+            self.assertEqual(panel.status()['activity']['status'], 'review')
+
+    def test_native_progress_requires_verified_publication(self):
+        from panel import journal_progress
+        day = '2026-01-02'
+        plan = {'projects': [{'date': day}]}
+        rounds = {role: {day: {'state': 'complete'}} for role in ('Master', 'Proxy')}
+        queue = {'rounds': rounds, 'delivery': {}}
+        progress = journal_progress(plan, queue)
+        self.assertEqual((progress['done'], progress['completed']), (2, 0))
+        queue['delivery'] = {role: {day: {'transaction': {'state': 'verified'}}} for role in rounds}
+        self.assertEqual(journal_progress(plan, queue)['completed'], 1)
+
     def test_review_duplicate_pause_resume_and_reopen(self):
         self.assertEqual(self.call('scan',{})[0],200)
         preview=self.wait('review')
