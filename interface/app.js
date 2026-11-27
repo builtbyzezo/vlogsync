@@ -26,7 +26,7 @@ async function request(path, data) {
       method: data ? "POST" : "GET",
       headers: {"X-VlogSync":token, ...(data ? {"Content-Type":"application/json"} : {})},
       body: data ? JSON.stringify(data) : undefined,
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(path.startsWith("editor-") ? 600000 : 6000)
     });
   } catch {
     throw Error(data ? "The controller did not confirm the action. Check Activity before trying again." :
@@ -83,6 +83,10 @@ function render(s) {
   $("settings-open").disabled = false;
   const a = s.activity;
   const idle = ["ready","review","complete","error","cancelled"].includes(a.status);
+  for (const id of ["editor-upload","editor-sync","editor-review","auto-prepare"]) $(id).disabled=!idle;
+  if (a.editor_operation && ["processing","interrupted","error"].includes(a.status))
+    $("editor-review").disabled=false;
+  $("auto-prepare").checked = s.settings.auto_prepare === true;
   const camera = s.camera ? (a.status==="processing" || a.status==="scanning" ? "Camera in use" : "Camera connected") : "Camera disconnected";
   $("camera").lastChild.textContent = " "+camera;
   $("camera").classList.toggle("connected",s.camera);
@@ -155,9 +159,9 @@ async function refresh() {
     const controls=$("controls");
     controls.replaceChildren();
     delete controls.dataset.key;
-    for (const id of ["scan","approve","edit-number","settings-open","settings-save","clearance"]) $(id).disabled=true;
+    for (const id of ["scan","approve","edit-number","settings-open","settings-save","clearance","editor-upload","editor-sync","editor-review","auto-prepare"]) $(id).disabled=true;
     for (const button of document.querySelectorAll("[data-folder]")) button.disabled=true;
-    for (const id of ["settings","number-dialog"]) if ($(id).open) $(id).close();
+    for (const id of ["settings","number-dialog","editor-dialog"]) if ($(id).open) $(id).close();
   }
 }
 for (const name of ["import","export"]) $(name+"-tab").onclick=()=>switchTab(name);
@@ -174,6 +178,11 @@ $("approve").onclick = ()=>{
 for (const b of document.querySelectorAll("[data-folder]")) b.onclick=()=>send("folder",{key:b.dataset.folder});
 $("settings-open").onclick=()=>{
   if (!current) return;
+  const space = spaceSettings();
+  $("space-name").value=space.space;
+  $("space-upload").value=space.upload;
+  $("space-completed").value=space.completed;
+  $("space-value").textContent=space.space;
   $("power").value = current.settings.power ?? "none";
   $("auto-open").checked = current.settings.auto_open ?? false;
   $("clearance-message").textContent="";
@@ -214,7 +223,7 @@ $("settings-open").onclick=()=>{
   $("settings").showModal();
 };
 $("settings-save").onclick=async()=>{
-  if (await send("settings",{power:$("power").value,auto_open:$("auto-open").checked})) $("settings").close();
+  if (await send("settings",{power:$("power").value,auto_open:$("auto-open").checked,auto_prepare:$("auto-prepare").checked,space:{space:$("space-name").value,upload:$("space-upload").value,completed:$("space-completed").value}})) $("settings").close();
 };
 $("clearance").onclick=async()=>{
   $("clearance-message").textContent="Checking saved coverage…";
@@ -241,7 +250,82 @@ $("number-form").onsubmit=async event=>{
 };
 if (fragment.get("view")==="export") switchTab("export");
 async function poll() {
-  await refresh();
+  if (!sending) await refresh();
   setTimeout(poll,2200);
 }
 poll();
+
+
+function spaceSettings() {
+  return {space:"builtbyzezo",upload:"New Vlogs ⏩",completed:"Edited ✅",...current?.settings.space};
+}
+$("auto-prepare").onchange=() => send("settings",{power:current.settings.power ?? "none",
+  auto_open:current.settings.auto_open ?? false, auto_prepare:$("auto-prepare").checked, space:spaceSettings()});
+const editorLabels={uncertain:"Check previous submission",prepared:"Prepared locally",submitted:"Submission confirmed",
+  review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",publishing:"Publication pending",exported:"Delivered"};
+async function editorPanel(mode) {
+  const response=await send("editor-list");
+  if (!response) return;
+  const {rows,space}=response.result;
+  $("editor-heading").textContent={upload:"Upload to Editor",sync:"Sync CapCut Edited Vlogs",review:"Review & Export"}[mode];
+  $("editor-guide").textContent={
+    upload:`In CapCut, open ${space.space} → ${space.upload} → Upload → Upload project. Select only the listed prepared drafts. Confirm each here after it appears in the destination as complete.`,
+    sync:`In CapCut, download completed drafts from ${space.space} → ${space.completed} with Keep both. Enter the exact returned project name. Close other editors before preparing the review copy.`,
+    review:"Open the working copy in CapCut, inspect the edit, then close it before approving that revision. Choose the final file title and select approved projects to export."
+  }[mode];
+  const list=$("editor-rows"), actions=$("editor-actions"), selected=new Map();
+  const run=async (name,data)=>{if(await send(name,data)) await editorPanel(mode);};
+  list.replaceChildren(); actions.replaceChildren();
+  for (const row of rows) {
+    const states={upload:["uncertain","prepared","submitted"],sync:["submitted","review"],review:["review","approved","triggered","publishing","exported"]};
+    if (!states[mode].includes(row.state)) continue;
+    const card=document.createElement("section"); card.className="setting-card";
+    card.append(item(`Vlog ${row.n} · ${editorLabels[row.state] ?? row.state}`));
+    if ((mode==="upload" && row.state==="uncertain") || (mode==="review" && row.state==="approved")) {
+      const pick=document.createElement("input"); pick.type="checkbox"; pick.setAttribute("aria-label",`Select Vlog ${row.n}`);
+      selected.set(row.n,pick); card.append(pick);
+    }
+    if (mode==="upload" && ["prepared","uncertain"].includes(row.state))
+      card.append(button(row.state==="prepared" ? "Confirm completed upload" : "Record existing submission",()=>{
+        const dest=row.destination ?? space;
+        if(confirm(`Confirm Vlog ${row.n} finished uploading to ${dest.space} / ${dest.upload}?`))
+          run("editor-submitted",{n:row.n,confirmed:true});
+      }));
+    if (mode==="sync" && row.state==="submitted") {
+      const returned=document.createElement("input"); returned.placeholder=`Vlog ${row.n} (1)`;
+      returned.setAttribute("aria-label","Returned project name");
+      if (row.local_returns?.length===1) returned.value=row.local_returns[0];
+      if (row.local_returns?.length>1) card.append(item("Multiple returns found. Confirm the exact revision: "+row.local_returns.join(", ")));
+      const working=document.createElement("input"); working.placeholder="Existing duplicate name (optional)";
+      working.setAttribute("aria-label","Existing duplicate name");
+      card.append(returned,working,button("Verify and prepare working copy",()=>run("editor-retrieve",{n:row.n,returned:returned.value,working:working.value})));
+    }
+    if (mode==="review" && ["review","approved"].includes(row.state)) {
+      if (row.working) card.append(item(row.working));
+      const title=document.createElement("input"); title.value=row.title ?? `Vlog ${row.n}`; title.maxLength=80;
+      title.setAttribute("aria-label","Final video title");
+      card.append(title,button("Approve this revision",()=>{
+        if(confirm("Approve the current working edit for final export?"))
+          run("editor-approve",{n:row.n,revision:row.revision,title:title.value});
+      }));
+    }
+    list.append(card);
+  }
+  if (!list.childElementCount) list.append(item("No projects at this step."));
+  const numbers=()=>[...selected].filter(([,pick])=>pick.checked).map(([n])=>n);
+  if (mode==="upload" && selected.size) actions.append(button("Prepare selected",()=>{
+    if(numbers().length && confirm("I checked Space and these projects have no previous submission."))
+      run("editor-prepare",{numbers:numbers(),checked_space:true});
+  }));
+  if (mode==="review" && selected.size) actions.append(button("Export selected",()=>{
+    if(numbers().length && confirm("Start native 1080p HEVC export for the approved projects?")) {
+      send("editor-export",{numbers:numbers()}).then(result=>{if(result)$("editor-dialog").close();});
+    }
+  }));
+  if (mode==="review" && rows.some(row=>["triggered","publishing"].includes(row.state)))
+    actions.append(button("Reconcile saved export",()=>send("editor-resume")));
+  if (!$("editor-dialog").open) $("editor-dialog").showModal();
+}
+$("editor-upload").onclick=()=>editorPanel("upload");
+$("editor-sync").onclick=()=>editorPanel("sync");
+$("editor-review").onclick=()=>editorPanel("review");

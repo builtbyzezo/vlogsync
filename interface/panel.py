@@ -22,7 +22,7 @@ sys.path.insert(0, str(ENGINE))
 import numbering
 from wve_safety import atomic, diagnostic
 
-VERSION = '1.2.3'
+VERSION = '1.3.0-rc1'
 ROLES = ('Master', 'Proxy')
 NAMES = {'extra':'Extra Footage','master':'1080p Master Vlogs',
          'proxy':'720p Editor Proxies','edited':'Edited Videos'}
@@ -69,8 +69,10 @@ class Panel:
         else:
             self.root.mkdir(parents=True, exist_ok=True)
             if not self.ledger.exists():
+                editor_preview = self.root == HERE/'Runs'/'Phase 3 Visual Review'
                 atomic(self.ledger, {'schema':1,'observed_through':0,'last_assigned':
-                       {'number':32,'recording_date':'2026-10-16'},'assignments':[]})
+                       {'number':281 if editor_preview else 32,
+                        'recording_date':'2026-11-25' if editor_preview else '2026-10-16'},'assignments':[]})
             for name in NAMES.values():
                 (self.root/name).mkdir(exist_ok=True)
 
@@ -136,6 +138,13 @@ class Panel:
             activity = status['activity']
             mode = activity['status']
             busy = mode in ('scanning','processing','interrupted')
+            if name.startswith('editor-'):
+                own_child = self.child is not None and self.child.poll() is None
+                editor_recovery = activity.get('editor_operation') and name in ('editor-list','editor-resume')
+                if own_child or (busy and not editor_recovery):
+                    raise ValueError('Wait for the active operation and reconcile any interruption.')
+                from editor_handoff import action
+                return action(self,name,data)
             if name=='folder':
                 path = self.folders()[data['key']]
                 if not path.is_dir():
@@ -159,7 +168,15 @@ class Panel:
                 power = data['power']
                 if power not in ('none','sleep','shutdown') or type(data['auto_open']) is not bool:
                     raise ValueError('Invalid completion behavior.')
-                atomic(self.config, {**status['settings'],'power':power,'auto_open':data['auto_open']})
+                editor_settings = {}
+                if 'space' in data:
+                    space, auto_prepare = data['space'],data.get('auto_prepare')
+                    if (not isinstance(space,dict) or set(space)!= {'space','upload','completed'}
+                            or any(not isinstance(x,str) or not 1<=len(x.strip())<=80 for x in space.values())
+                            or type(auto_prepare) is not bool):
+                        raise ValueError('Enter a Space and both destination folder names.')
+                    editor_settings={'space':{k:v.strip() for k,v in space.items()},'auto_prepare':auto_prepare}
+                atomic(self.config, {**status['settings'],'power':power,'auto_open':data['auto_open'],**editor_settings})
                 return
             if name=='number' and (mode in ('ready','complete') or mode=='error' and not activity.get('run')):
                 num = data['number']
@@ -218,7 +235,7 @@ class Panel:
         previous=read(self.state,{'status':'ready'})
         atomic(self.state,{**previous,**payload,'status':'scanning' if action=='scan' else 'processing',
                            'operation':'Scanning recordings' if action=='scan' else 'Preparing exports',
-                           'message':'','run':payload.get('run')})
+                           'message':'','run':payload.get('run'),'editor_operation':action=='editor-export'})
         try:
             self.child=subprocess.Popen([sys.executable,'-B',str(Path(__file__)), '--workspace',str(self.root),
                                      *(['--native-pilot'] if self.native_pilot else ['--live'] if self.live else []),'--worker',action,json.dumps(payload)],
@@ -249,8 +266,30 @@ def worker(panel, action, data):
     try:
         if not panel.live:
             return simulate(panel,action,data)
+        if action=='editor-export':
+            from editor_handoff import final_job
+            final_job(panel,data['numbers'])
+            atomic(panel.state,{'status':'complete','operation':'Edited videos delivered'})
+            return
         from phase2_bridge import execute
         execute(panel,action,data)
+        saved=read(panel.state,{})
+        if (action=='approve' and saved.get('status')=='complete'
+                and read(panel.config,{}).get('auto_prepare') is True and not panel.native_pilot):
+            from editor_handoff import prepare, store
+            path=store(panel)
+            state=read(path,{})
+            plan=read(panel.runs/saved['run']/'plan.json',{})
+            numbers=[p['vlog_number'] for p in plan.get('projects',[]) if not p.get('existing')]
+            try:
+                if numbers:
+                    prepare(panel,state,numbers,True,just_exported=True)
+                    atomic(path,state)
+                    saved['message']='Local publication verified. Editor projects prepared for manual transfer.'
+                    atomic(panel.state,saved)
+            except (OSError,ValueError,RuntimeError) as error:
+                saved['message']='Import complete. Editor preparation held: '+diagnostic(error,saved.get('run'))['message']
+                atomic(panel.state,saved)
     except Exception as e:
         saved=read(panel.state,{})
         saved.update(status='error',message=diagnostic(e,saved.get('run'))['message'])

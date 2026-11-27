@@ -13,17 +13,17 @@
 <div class="actions">
 <div class="import-card">
 <button class="action primary" id="scan" disabled><span class="action-icon" aria-hidden="true">↓</span><span><strong>Import Vlogs</strong><small>Create masters and editor proxies.</small></span><span class="tail" aria-hidden="true">→</span></button>
-<label class="upload-option"><input type="checkbox" disabled aria-describedby="upload-note"> Automatically upload to editor <small id="upload-note">Unavailable</small></label>
+<label class="upload-option"><input type="checkbox" id="auto-prepare" disabled> Automatically prepare editor projects</label>
 </div>
-<button class="action future" disabled><span class="action-icon" aria-hidden="true">↑</span><span><strong>Upload to Editor</strong><small>Send existing proxies to CapCut Space.</small></span></button>
-<details class="availability"><summary>About editor upload</summary><p>CapCut Space integration isn’t available yet.</p></details>
+<button class="action" id="editor-upload" disabled><span class="action-icon" aria-hidden="true">↑</span><span><strong>Upload to Editor</strong><small>Prepare proxy projects for native batch upload.</small></span></button>
+
 </div></section>
 <section id="export-page" hidden aria-label="Export workflow">
 <div class="actions">
-<button class="action future" disabled><span class="action-icon" aria-hidden="true">↓</span><span><strong>Sync CapCut Edited Vlogs</strong><small>Retrieve projects from your editor.</small></span></button>
-<button class="action future" disabled><span class="action-icon" aria-hidden="true">✓</span><span><strong>Review &amp; Export</strong><small>Review edits and export final videos.</small></span></button>
+<button class="action" id="editor-sync" disabled><span class="action-icon" aria-hidden="true">↓</span><span><strong>Sync CapCut Edited Vlogs</strong><small>Retrieve projects from your editor.</small></span></button>
+<button class="action" id="editor-review" disabled><span class="action-icon" aria-hidden="true">✓</span><span><strong>Review &amp; Export</strong><small>Review edits and export final videos.</small></span></button>
 <button class="action future" disabled><span class="action-icon" aria-hidden="true">↑</span><span><strong>Publish to YouTube</strong><small>Publish approved final videos.</small></span></button>
-<details class="availability"><summary>About these actions</summary><p>Editor sync, final exports and YouTube publishing aren’t available yet.</p></details>
+<details class="availability"><summary>About publishing</summary><p>YouTube publishing is unavailable.</p></details>
 </div></section>
 <section class="review" id="review" hidden aria-labelledby="review-title"><h2 id="review-title">Review import</h2><p id="review-info"></p><ul id="review-items"></ul><button class="solid" id="approve">Approve and prepare</button></section>
 <section class="activity" aria-labelledby="activity-title">
@@ -34,10 +34,16 @@
 </main>
 <footer><button data-folder="master" disabled>Masters ↗</button><button data-folder="proxy" disabled>Proxies ↗</button><button data-folder="edited" disabled>Edited Videos ↗</button><small id="mode"></small></footer>
 </div>
+<dialog id="editor-dialog"><form method="dialog"><div class="dialog-header"><h2 id="editor-heading"></h2><button aria-label="Close editor workflow">×</button></div></form>
+<div class="settings-body"><p id="editor-guide"></p><div id="editor-rows" class="settings-list"></div><div id="editor-actions" class="controls"></div></div></dialog>
 <dialog id="settings"><form method="dialog"><div class="dialog-header"><h2>Settings</h2><button aria-label="Close settings">×</button></div></form>
 
 <div class="settings-body settings-list">
 <div id="settings-details" class="settings-list"></div>
+<details class="setting-card"><summary><strong>CapCut Space</strong><span id="space-value"></span></summary>
+<label>Space <input id="space-name" maxlength="80"></label>
+<label>Upload folder <input id="space-upload" maxlength="80"></label>
+<label>Completed folder <input id="space-completed" maxlength="80"></label></details>
 <details class="setting-card"><summary><strong>After verified export</strong><span id="power-value"></span></summary>
 <label>Completion action <select id="power"><option value="none">Do nothing</option><option value="sleep">Sleep</option><option value="shutdown">Shut down</option></select></label>
 <p class="muted">Power actions require confirmation for each live run.</p></details>
