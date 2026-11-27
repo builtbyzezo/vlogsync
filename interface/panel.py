@@ -277,19 +277,20 @@ def worker(panel, action, data):
         from phase2_bridge import execute
         execute(panel,action,data)
         saved=read(panel.state,{})
-        if (action=='approve' and saved.get('status')=='complete'
-                and read(panel.config,{}).get('auto_prepare') is True and not panel.native_pilot):
-            from editor_handoff import prepare, store
+        if (action in ('approve','resume','retry') and saved.get('status')=='complete'
+                and saved.get('run') and not panel.native_pilot):
+            from editor_handoff import prepare, store, record_new_pairs
             path=store(panel)
-            state=read(path,{})
             plan=read(panel.runs/saved['run']/'plan.json',{})
             numbers=[p['vlog_number'] for p in plan.get('projects',[]) if not p.get('existing')]
             try:
                 if numbers:
-                    prepare(panel,state,numbers,True,just_exported=True)
-                    atomic(path,state)
-                    saved['message']='Local publication verified. Editor projects prepared for manual transfer.'
-                    atomic(panel.state,saved)
+                    state=record_new_pairs(panel,numbers)
+                    if read(panel.config,{}).get('auto_prepare',True) is True:
+                        prepare(panel,state,numbers,True,just_exported=True)
+                        atomic(path,state)
+                        saved['message']='Local publication verified. Editor projects prepared for native upload.'
+                        atomic(panel.state,saved)
             except (OSError,ValueError,RuntimeError) as error:
                 saved['message']='Import complete. Editor preparation held: '+diagnostic(error,saved.get('run'))['message']
                 atomic(panel.state,saved)

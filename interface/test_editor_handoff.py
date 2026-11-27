@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from panel import Panel
-from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store
+from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store, record_new_pairs, eligible_returns
 from panel import read
 
 
@@ -58,6 +58,30 @@ class HandoffTests(unittest.TestCase):
             retrieval_selection(state,matches,[{'n':281,'returned':'Vlog 281 (3)'}])
         self.assertEqual(retrieval_selection(state,matches,[{'n':281,'returned':'Vlog 281 (2)'}]),{281:'Vlog 281 (2)'})
         self.assertEqual(retrieval_selection(state,matches[:1],[{'n':281}]),{281:'Vlog 281 (1)'})
+
+    def test_default_batch_preserves_exceptions_and_historical_holds(self):
+        record_new_pairs(self.panel,[281,282,283])
+        self.assertEqual(self.rows()[284]['state'],'uncertain')
+        self.act('prepare',numbers=[282,283])
+        with self.assertRaises(ValueError):
+            self.act('confirm-batch',numbers=[282,284],confirmed=True)
+        self.assertEqual(self.rows()[282]['state'],'prepared')
+        self.act('confirm-batch',numbers=[282],confirmed=True)
+        rows=self.rows()
+        self.assertEqual(rows[282]['state'],'submitted')
+        self.assertEqual(rows[283]['state'],'prepared')
+        self.assertEqual(rows[281]['state'],'submitted')
+        saved=read(store(self.panel),{})
+        self.assertEqual(eligible_returns(saved,catalog(self.panel)),[{'n':282},{'n':281}])
+        retrieve_job(self.panel,[{'n':282},{'n':281}])
+        rows=self.rows()
+        picks=[{'n':n,'title':f'Week {n}','revision':rows[n]['revision']} for n in (281,282)]
+        rejected=[picks[0],dict(picks[1],revision='stale')]
+        with self.assertRaises(ValueError):
+            self.act('approve-export',picks=rejected,confirmed=True)
+        self.assertEqual(self.rows()[281]['state'],'review')
+        self.act('approve-export',picks=picks,confirmed=True)
+        self.assertEqual([self.rows()[n]['state'] for n in (281,282)],['exported','exported'])
 
     def test_revision_includes_effect_and_rejects_unsafe_title(self):
         folder=self.panel.root

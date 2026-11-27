@@ -399,6 +399,41 @@ def retrieve_job(panel, picks):
             lease.close()
 
 
+def record_new_pairs(panel, numbers):
+    """Only the current successfully published import can supply automatic eligibility."""
+    path=store(panel)
+    state=read(path,{})
+    available=inventory(panel)
+    for n in numbers:
+        if n in available and str(n) not in state and not confirmed(panel,n):
+            state[str(n)]=available[n] | {'state':'unshared'}
+    atomic(path,state)
+    return state
+
+
+def eligible_returns(state, entries):
+    return [{'n':row['n']} for row in state.values()
+            if row['state']=='submitted' and not row.get('retrieval_error')
+            and len(returned_matches(row,entries))==1]
+
+
+def approve_row(panel, path, state, row, offered):
+    if (row.get('state') not in ('review','approved') or row.get('master_verified') is not True
+            or offered.get('revision')!=row.get('revision')):
+        raise ValueError('Review the current revision before approving.')
+    if panel.live:
+        w=engine(panel)
+        draft,record=local_draft(w.exports.ROOT,row['working'])
+        if (draft/'.locked').exists() or record['draft_id']!=row['working_id']:
+            raise ValueError('Close the exact working copy after review.')
+        current=revision(draft)
+        if current!=row['revision']:
+            row.update(state='review',revision=current)
+            atomic(path,state)
+            raise ValueError('The draft changed. Reload and review the new revision before approving.')
+    return title(offered['title'])
+
+
 def action(panel,name,data):
     path=store(panel)
     state=read(path,{})
@@ -418,6 +453,52 @@ def action(panel,name,data):
             if row['state']=='submitted':
                 row['local_returns']=returned_matches(row,entries)
         return {'rows':listed,'space':settings(panel)}
+    if name=='editor-sync':
+        picks=eligible_returns(state,catalog(panel))
+        if picks:
+            panel.spawn('editor-retrieve-batch',{'picks':picks[:20]})
+        return {'started':len(picks[:20])}
+    if name=='editor-confirm-batch':
+        numbers=data['numbers']
+        if (data.get('confirmed') is not True or not isinstance(numbers,list)
+                or not 1<=len(numbers)<=250 or any(type(n) is not int for n in numbers)
+                or len(set(numbers))!=len(numbers)):
+            raise ValueError('Confirm the completed uploads in this batch.')
+        selected=[state.get(str(n),{}) for n in numbers]
+        if any(row.get('state')!='prepared' for row in selected):
+            raise ValueError('Reconcile any items that are not awaiting upload confirmation.')
+        if any(row.get('destination')!=selected[0].get('destination') for row in selected):
+            raise ValueError('Confirm one Space destination at a time.')
+        stamp=datetime.now(timezone.utc).isoformat()
+        for row in selected:
+            row.update(state='submitted',confirmed_utc=stamp)
+        atomic(path,state)
+        return {'confirmed':len(selected)}
+    if name=='editor-approve-export':
+        if any(r.get('state') in ('triggered','publishing') for r in state.values()):
+            raise ValueError('Reconcile the previous native export before submitting another batch.')
+        picks=data['picks']
+        if not isinstance(picks,list) or not 1<=len(picks)<=20 or data.get('confirmed') is not True:
+            raise ValueError('Select up to 20 reviewed projects.')
+        checked={}
+        for pick in picks:
+            n=pick['n']
+            if type(n) is not int or n in checked:
+                raise ValueError('Select each reviewed project once.')
+            checked[n]=approve_row(panel,path,state,state.get(str(n),{}),pick)
+        names=[value.casefold() for value in checked.values()]
+        if len(names)!=len(set(names)):
+            raise ValueError('Use a different final title for each selected vlog.')
+        if panel.live:
+            folder=panel.folders()['edited']
+            if not folder.is_dir() or any((folder/(value+'.mp4')).exists() for value in checked.values()):
+                raise ValueError('Edited Videos is unavailable or a final output already exists.')
+        for n,value in checked.items():
+            state[str(n)].update(state='approved' if panel.live else 'exported',title=value)
+        atomic(path,state)
+        if panel.live:
+            panel.spawn('editor-export',{'numbers':list(checked)})
+        return {'saved':True}
     if name=='editor-retrieve-batch':
         retrieval_selection(state,catalog(panel),data['picks'])
         return panel.spawn('editor-retrieve-batch',{'picks':data['picks']})
@@ -492,18 +573,9 @@ def action(panel,name,data):
             row=state[str(number)]=rows[number] | {'state':'prepared','destination':settings(panel)}
         if name=='editor-submitted' and row.get('state')=='prepared' and data.get('confirmed') is True:
             row.update(state='submitted',confirmed_utc=datetime.now(timezone.utc).isoformat())
-        elif name=='editor-approve' and row.get('state') in ('review','approved') and data.get('revision')==row.get('revision'):
-            if panel.live:
-                w=engine(panel)
-                draft,record=local_draft(w.exports.ROOT,row['working'])
-                if (draft/'.locked').exists() or record['draft_id']!=row['working_id']:
-                    raise ValueError('Close the exact working copy after review.')
-                current=revision(draft)
-                if current!=row['revision']:
-                    row.update(state='review',revision=current)
-                    atomic(path,state)
-                    raise ValueError('The draft changed. Reload and review the new revision before approving.')
-            row.update(state='approved',title=title(data['title']))
+        elif name=='editor-approve':
+            value=approve_row(panel,path,state,row,data)
+            row.update(state='approved',title=value)
         else:
             raise ValueError('Reconcile the current handoff state before proceeding.')
     atomic(path,state)

@@ -10,7 +10,7 @@ let connected = false;
 let refreshSequence = 0;
 let noticeTimer;
 let tab = "import";
-let settingsDirty=false, numberDirty=false, editorMode;
+let settingsDirty=false, numberDirty=false, editorMode, nextReturnCheck=0;
 const editorInputs=new Map();
 for (const dialog of document.querySelectorAll("dialog")) {
   const outside = event => {
@@ -111,7 +111,7 @@ function render(s) {
   for (const id of ["editor-upload","editor-sync","editor-review","auto-prepare"]) $(id).disabled=!idle;
   if (a.editor_operation && ["processing","interrupted","error"].includes(a.status))
     $("editor-review").disabled=false;
-  $("auto-prepare").checked = s.settings.auto_prepare === true;
+  $("auto-prepare").checked = s.settings.auto_prepare !== false;
   const retrieval=$("editor-progress");
   retrieval.hidden=editorMode!=="sync" || !a.editor_retrieval || !a.total;
   retrieval.textContent=retrieval.hidden ? "" : [`${a.done ?? 0} of ${a.total} returns checked`,a.message].filter(Boolean).join(" · ");
@@ -287,6 +287,12 @@ async function poll() {
     await refresh();
     if (previous==="processing" && current?.activity.status!=="processing" &&
         editorMode && $("editor-dialog").open) await editorPanel(editorMode,false);
+    if (connected && editorMode==="sync" && $("editor-dialog").open &&
+        ["ready","review","complete","error","cancelled"].includes(current?.activity.status) &&
+        Date.now()>=nextReturnCheck) {
+      nextReturnCheck=Date.now()+10000;
+      await startSync(false);
+    }
   }
   setTimeout(poll,2200);
 }
@@ -302,7 +308,8 @@ const editorLabels={unshared:"Unshared · eligible",uncertain:"Previous submissi
   submitted:"Submission confirmed",review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",
   publishing:"Publication pending",exported:"Delivered"};
 const selectedByMode={upload:new Set(),sync:new Set(),review:new Set()};
-let historyOpen=false;
+let historyOpen=false, uncertaintyOpen=false;
+const uploadExceptions=new Set();
 
 async function editorPanel(mode, open=true) {
   const dialog=$("editor-dialog");
@@ -315,9 +322,9 @@ async function editorPanel(mode, open=true) {
   $("editor-destination").textContent=mode==="review" ? "Final delivery · Edited Videos" :
     `${space.space} / ${mode==="upload" ? space.upload : space.completed}`;
   $("editor-guide").textContent={
-    upload:"Prepare eligible drafts, then select them in CapCut’s Upload project dialog. Confirm completed uploads here individually.",
-    sync:"Use Keep both in CapCut when downloading edits. Select detected local returns to prepare their master-backed copies.",
-    review:"Open each working copy, inspect the edit, then close it before approving the saved revision."
+    upload:"Upload the prepared drafts in CapCut. Then confirm the batch here and exclude any unfinished uploads.",
+    sync:"Download edits in CapCut using Keep both. Clear local matches are prepared automatically.",
+    review:"Review each copy in CapCut and close it. Check the edits you approve, then export the batch."
   }[mode];
   const list=$("editor-rows"), actions=$("editor-actions"), selected=new Map(), returns=new Map();
   const run=async (name,data)=>{if(await send(name,data) && dialog.open) await editorPanel(mode,false);};
@@ -330,6 +337,27 @@ async function editorPanel(mode, open=true) {
   history.open=historyOpen;
   history.ontoggle=()=>{historyOpen=history.open;};
   history.append(summary);
+  const uncertain=document.createElement("details");
+  uncertain.className="setting-card editor-history";
+  uncertain.open=uncertaintyOpen;
+  uncertain.ontoggle=()=>{uncertaintyOpen=uncertain.open;};
+  const uncertainSummary=document.createElement("summary");
+  uncertainSummary.textContent=`Historical projects to reconcile (${rows.filter(row=>row.state==="uncertain").length})`;
+  uncertain.append(uncertainSummary);
+  const prepared=rows.filter(row=>row.state==="prepared");
+  const destination=prepared[0]?.destination ?? space;
+  const batch=prepared.filter(row=>{
+    const dest=row.destination ?? space;
+    return dest.space===destination.space && dest.upload===destination.upload;
+  });
+  if (mode==="upload" && batch.length)
+    $("editor-destination").textContent=`${destination.space} / ${destination.upload}`;
+  const exceptions=document.createElement("details");
+  exceptions.className="setting-card editor-history";
+  const exceptionSummary=document.createElement("summary");
+  exceptionSummary.textContent="Exclude incomplete uploads";
+  exceptions.append(exceptionSummary);
+  const titles=new Map();
   const selectRow=(card,row)=>{
     const pick=document.createElement("input");
     pick.type="checkbox";
@@ -350,23 +378,25 @@ async function editorPanel(mode, open=true) {
     head.append(name,state); card.append(head);
     const controls=document.createElement("div"); controls.className="controls"; card.append(controls);
     if (mode==="upload") {
-      if (row.state==="unshared") selectRow(card,row);
       if (row.state==="uncertain") controls.append(button("Mark unshared",async()=>{
         if(await confirmAction(`I checked Space and Vlog ${row.n} has no previous submission.`))
           run("editor-mark-unshared",{n:row.n,checked_space:true});
+      }),button("Record existing submission",async()=>{
+        if(await confirmAction(`Confirm Vlog ${row.n} already finished uploading to ${space.space} / ${space.upload}?`))
+          run("editor-submitted",{n:row.n,confirmed:true});
       }));
-      if (["prepared","uncertain","unshared"].includes(row.state)) controls.append(button(
-        row.state==="prepared" ? "Confirm completed upload" : "Record existing submission",async()=>{
-          const dest=row.destination ?? space;
-          if(await confirmAction(`Confirm Vlog ${row.n} finished uploading to ${dest.space} / ${dest.upload}?`))
-            run("editor-submitted",{n:row.n,confirmed:true});
-        }));
+      if (row.state==="prepared" && batch.includes(row)) {
+        const label=document.createElement("label"), pick=document.createElement("input");
+        pick.type="checkbox"; pick.checked=uploadExceptions.has(row.n);
+        pick.onchange=()=>pick.checked ? uploadExceptions.add(row.n) : uploadExceptions.delete(row.n);
+        label.append(pick,`Vlog ${row.n} is incomplete`); exceptions.append(label);
+      }
     }
     if (mode==="sync" && row.state==="submitted") {
       const options=row.local_returns ?? [];
       if (options.length===1) card.append(editorDetail(options[0]));
       if (!options.length) card.append(editorDetail("Waiting for the completed local download."));
-      if (options.length) selectRow(card,row);
+      if (options.length>1 || (options.length===1 && row.retrieval_error)) selectRow(card,row);
       if (options.length>1) {
         const picker=document.createElement("select");
         picker.setAttribute("aria-label",`Returned revision for Vlog ${row.n}`);
@@ -387,45 +417,43 @@ async function editorPanel(mode, open=true) {
       const key=`title-${row.n}-${row.revision}`;
       title.value=editorInputs.get(key) ?? row.title ?? `Vlog ${row.n}`;
       title.maxLength=80; title.setAttribute("aria-label",`Final video title for Vlog ${row.n}`);
-      controls.append(button("Open in CapCut",()=>send("editor-open",{n:row.n})),title,
-        button("Approve revision",async()=>{
-          if(await confirmAction("Approve the saved working edit and title for final export?"))
-            run("editor-approve",{n:row.n,revision:row.revision,title:title.value});
-        }));
-      if (row.state==="approved") selectRow(card,row);
+      controls.append(button("Open in CapCut",()=>send("editor-open",{n:row.n})),title);
+      titles.set(row.n,{title,revision:row.revision});
+      if (row.master_verified) selectRow(card,row);
       const pick=selected.get(row.n);
-      function protectTitle() {
-        if (!pick) return;
-        pick.disabled=title.value!==row.title;
-        if (pick.disabled) {pick.checked=false;selectedByMode[mode].delete(row.n);}
-      }
-      title.oninput=()=>{editorInputs.set(key,title.value);protectTitle();};
-      protectTitle();
+      if(pick) pick.setAttribute("aria-label",`Approve reviewed Vlog ${row.n} for export`);
+      title.oninput=()=>{editorInputs.set(key,title.value);};
     }
-    (mode==="upload" && row.state==="submitted" ? history : list).append(card);
+    (mode==="upload" && row.state==="submitted" ? history :
+      mode==="upload" && row.state==="uncertain" ? uncertain : list).append(card);
   }
   if (!list.childElementCount) list.append(editorDetail("No projects at this step."));
-  if (mode==="upload") list.append(history);
+  if (mode==="upload") {
+    if (batch.length) list.append(exceptions);
+    if (uncertain.childElementCount>1) list.append(uncertain);
+    list.append(history);
+  }
   const numbers=()=>[...selected].filter(([,pick])=>pick.checked && !pick.disabled).map(([n])=>n);
-  if (mode==="upload" && selected.size) {
-    actions.append(button("Select all eligible",()=>{
-      for (const [n,pick] of selected) {pick.checked=true;selectedByMode[mode].add(n);}
-    }),button("Prepare selected",()=>{
-      if(numbers().length) run("editor-prepare",{numbers:numbers()});
+  if (mode==="upload") {
+    const eligible=rows.filter(row=>row.state==="unshared").map(row=>row.n);
+    if (eligible.length) actions.append(button(`Prepare all eligible (${eligible.length})`,()=>run("editor-prepare",{numbers:eligible})));
+    if (batch.length) actions.append(button("Confirm completed uploads",()=>{
+      const numbers=batch.filter(row=>!uploadExceptions.has(row.n)).map(row=>row.n);
+      if (!numbers.length) return notice("No completed uploads selected.");
+      run("editor-confirm-batch",{numbers,confirmed:true});
     }));
   }
   if (mode==="sync") {
-    actions.append(button("Refresh local downloads",()=>editorPanel(mode,false)));
-    if (selected.size) actions.append(button("Prepare selected returns",async()=>{
+    actions.append(button("Check for returns",()=>startSync(false)));
+    if (selected.size) actions.append(button("Prepare selected exceptions",async()=>{
       const picks=numbers().map(n=>({n,returned:returns.get(n)?.value || undefined}));
       if (picks.some(p=>returns.has(p.n) && !p.returned)) return notice("Choose a revision for each ambiguous return.");
-      if (picks.length && await send("editor-retrieve-batch",{picks}) && dialog.open)
-        $("editor-guide").textContent="Preparing selected returns. Progress is shown in Activity.";
+      if (picks.length) await send("editor-retrieve-batch",{picks});
     }));
   }
-  if (mode==="review" && selected.size) actions.append(button("Export selected approved",async()=>{
-    if(numbers().length && await confirmAction("Start native 1080p HEVC export for the selected approved projects?"))
-      send("editor-export",{numbers:numbers()}).then(result=>{if(result)dialog.close();});
+  if (mode==="review" && selected.size) actions.append(button("Approve & export selected",async()=>{
+    const picks=numbers().map(n=>({n,title:titles.get(n).title.value,revision:titles.get(n).revision}));
+    if (picks.length && await send("editor-approve-export",{picks,confirmed:true})) dialog.close();
   }));
   if (mode==="review" && rows.some(row=>["triggered","publishing"].includes(row.state)))
     actions.append(button("Reconcile saved export",()=>send("editor-resume")));
@@ -435,5 +463,10 @@ function editorDetail(value) {
   const text=document.createElement("p"); text.className="muted"; text.textContent=value; return text;
 }
 $("editor-upload").onclick=()=>editorPanel("upload");
-$("editor-sync").onclick=()=>editorPanel("sync");
+async function startSync(open=true) {
+  nextReturnCheck=Date.now()+10000;
+  await editorPanel("sync",open);
+  if ($("editor-dialog").open && editorMode==="sync") await send("editor-sync");
+}
+$("editor-sync").onclick=()=>startSync();
 $("editor-review").onclick=()=>editorPanel("review");
