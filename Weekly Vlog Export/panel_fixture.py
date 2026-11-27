@@ -7,7 +7,7 @@ PILOTS = Path(__file__).resolve().parent.parent / 'interface' / 'Runs'
 
 def allowed(root):
     return root.parent.parent == PILOTS and root.name == 'VlogSync' and root.parent.name in (
-        'Native panel pilot', 'Native panel pilot 2', 'Native panel pilot 3')
+        'Native panel pilot', 'Native panel pilot 2', 'Native panel pilot 3', 'Native editor qualification')
 
 
 def workspace():

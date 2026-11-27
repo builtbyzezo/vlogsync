@@ -28,8 +28,12 @@ def settings(panel):
 
 
 def engine(panel):
-    import weekly_vlog_export as w
     os.environ['WEEKLY_VLOG_MANAGER_ROOT'] = str(panel.root)
+    if panel.native_pilot:
+        os.environ['VLOGSYNC_DISPOSABLE_NATIVE'] = str(panel.root)
+    import weekly_vlog_export as w
+    if panel.native_pilot and w.PILOT_WORKSPACE != panel.root:
+        raise RuntimeError('Native editor qualification is outside its disposable workspace.')
     w.configure_production()
     return w
 

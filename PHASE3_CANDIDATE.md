@@ -9,3 +9,9 @@ Final titles and approvals are tied to saved project revisions and checked toget
 The visual shortcut does not activate live mode. For supervised qualification, use a separate approved workspace with its own marker, ledger, receipts and output folders. Preserve the production marker and destinations until release approval. Qualify a two-project native handoff with an interrupted transfer and one returned edit through revision approval, native final export, and filesystem delivery. Separately preflight any additional Windows computer. The existing successful single-project round trip and master-source comparison remain prior evidence.
 
 Focused qualification exercised the streamlined actions in a disposable browser workspace and a two-project local return batch with previously qualified media. The wrong bundled proxy was held, the unaffected copy proceeded, and the corrected exception resumed. The real Space transfer and the integrated native queue path remain supervised qualification gates.
+
+## Native batch checkpoint
+
+The isolated Native editor qualification workspace contains two reuse-verified disposable media pairs and an independent ledger. Its second fixture identity is synthetic because the prior six-second renders share a source. The actual media hashes are unchanged. Both proxy-only CapCut drafts registered as Vlog 700002 and Vlog 700003. Reopening the controller retained both draft identities and rejected a duplicate preparation request. No submission confirmation is recorded until the operator confirms the actual Space result.
+
+Resume from the existing disposable workspace using the native-pilot flag. Record only completed uploads, then reconcile the two existing Keep both returns. Keep all final renders in the isolated Edited Videos folder. Stable promotion remains gated on the native batch result.
