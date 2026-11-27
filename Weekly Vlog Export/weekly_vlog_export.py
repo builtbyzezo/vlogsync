@@ -819,6 +819,10 @@ def run(args):
     CURRENT_LOG = base/'controller.log'
     lock = local_lock().open('a+b')
     power = ExitStack()
+    stage = 'Validating frozen run'
+    ui = None
+    plan = {}
+    state = {}
     try:
         lock.seek(0)
         msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
@@ -885,16 +889,20 @@ def run(args):
             return 0
         with WinOcr() as ocr:
             ui = CapCut(exports, ocr)
+            stage = 'Preparing CapCut and registering drafts'
             register(pending, ui)
+            stage = 'Opening CapCut Home'
             if not ui.windows('CapCut'):
                 ui.launch()
             for kind in exports.ROUND:
+                stage = f'{kind} export round'
                 active = plan if kind=='Master' else dict(plan,projects=[
                     item for item in plan['projects']
                     if state['rounds']['Master'].get(item['date'],{}).get('state')=='complete'])
                 code = queue_round(active, ui, state, journal, kind, args.qualification)
                 if code:
                     return code
+            stage = 'Verifying local pair content and timing'
             complete = []
             for item in plan['projects']:
                 day = item['date']
@@ -911,6 +919,7 @@ def run(args):
             restore = next((p for p in plan['projects'] if
                             (exports.ROOT/p['title']/'draft_content.json').is_file()),None)
             if restore:
+                stage = 'Restoring the 1080p HEVC preset'
                 ui.restore_master(restore)
             state['preset_restored'] = True
             state['complete'] = time.time()
@@ -920,6 +929,7 @@ def run(args):
                 ui.leave_home()
         event('Local exports passed. 1080p HEVC persisted after reopening the export dialog.')
         if not args.qualification:
+            stage = 'Verifying filesystem publication'
             publish(sys.modules[__name__],dict(plan,projects=complete),state,journal)
             if len(complete)!=len(plan['projects']):
                 raise RuntimeError('Unaffected verified pairs were published. One or more vlogs require review.')
@@ -936,7 +946,19 @@ def run(args):
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         event(f'HELD: {error}')
-        reliability.atomic(base/'troubleshooting.json',reliability.diagnostic(error,base.name))
+        report = reliability.diagnostic(error,base.name)
+        report.update(operation=stage, controller='1.2.1',
+                      vlog_numbers=[item['vlog_number'] for item in plan.get('projects',[])
+                                    if item.get('vlog_number') is not None],
+                      journal_exists=(base/'queue.json').is_file(),
+                      export_states={role: {day: row['state'] for day,row in jobs.items()}
+                                     for role,jobs in state.get('rounds',{}).items()})
+        if ui is not None:
+            try:
+                report['capcut_windows'] = ui.diagnostic_windows()
+            except (OSError, RuntimeError, ValueError):
+                report['capcut_windows'] = {'status':'unavailable'}
+        reliability.atomic(base/'troubleshooting.json',report)
         with CURRENT_LOG.open('a',encoding='utf-8') as f:
             f.write(traceback.format_exc())
         traceback.print_exc()

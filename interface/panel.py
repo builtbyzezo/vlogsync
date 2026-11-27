@@ -22,7 +22,7 @@ sys.path.insert(0, str(ENGINE))
 import numbering
 from wve_safety import atomic, diagnostic
 
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 ROLES = ('Master', 'Proxy')
 NAMES = {'extra':'Extra Footage','master':'1080p Master Vlogs',
          'proxy':'720p Editor Proxies','edited':'Edited Videos'}
@@ -117,6 +117,11 @@ class Panel:
                          status=s['status'],message=s.get('message','The controller stopped.'),
                          recovery='Preserve the frozen preview, journal and outputs. Review the native queue before retrying.',
                          run=s.get('run'))
+            if self.live and isinstance(run,str) and RUN.fullmatch(run):
+                report = read(self.runs/run/'troubleshooting.json',{})
+                issue.update({key:report[key] for key in
+                              ('operation','vlog_numbers','journal_exists','export_states','capcut_windows')
+                              if key in report})
         return dict(version=VERSION, demo=not self.live,camera=connected,activity=s,numbering=current,
                     projects=projects, held=[i[0] for i in p.get('held',[])],
                     review=s.get('review'),settings=settings,

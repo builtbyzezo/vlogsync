@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+Restores an unambiguous minimized CapCut window before applying ordinary focus and project checks. Diagnostics include the failing stage, vlog numbers, queue and window state. The existing production run resumed once per output, verified matching picture, audio, timing and filesystem hashes, and restored the HEVC preset. No additional render was required for packaging.
+
 ## 1.2.0
 
 Released the Windows operator panel after a disposable native export cycle with matching timing, verified filesystem copies and confirmed 1080p HEVC preset restoration. CapCut Home list rows now open via the thumbnail associated with the verified project title. Retains the existing completion migrations and Phase 1 rollback.

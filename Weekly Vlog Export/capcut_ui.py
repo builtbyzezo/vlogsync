@@ -4,7 +4,7 @@ import re
 import subprocess
 import time
 
-from desktop_controls import Box, Screen, focused_edit, foreground, pid, process_image, rect, title, user, wait_for
+from desktop_controls import Box, Screen, focused_edit, foreground, interactive_desktop, pid, process_image, rect, title, user, wait_for
 from deployment import CAPCUT_BUILD
 
 
@@ -33,7 +33,33 @@ class CapCut:
         return Screen(hwnd, self.ocr)
 
     def get_window(self, name):
-        return wait_for(lambda: self.current_window(name), f'the exact {name} window')
+        restore_requested = False
+        def exact_window():
+            nonlocal restore_requested
+            selected = self.current_window(name)
+            if selected is not None or name != 'CapCut' or restore_requested:
+                return selected
+            candidates = self.windows(name)
+            if len(candidates) == 1 and user.IsIconic(candidates[0]):
+                if not interactive_desktop():
+                    raise RuntimeError('Unlock Windows before restoring the minimized CapCut window')
+                restore_requested = True
+                if not user.ShowWindowAsync(candidates[0], 9):  # SW_RESTORE
+                    raise RuntimeError('Windows refused to restore the minimized CapCut window')
+            return None
+        return wait_for(exact_window, f'the exact {name} window')
+
+    def diagnostic_windows(self):
+        foreground_window = user.GetForegroundWindow()
+        return {
+            'interactive_desktop': interactive_desktop(),
+            'foreground_is_capcut': process_image(pid(foreground_window)) == self.binary,
+            'main_windows': [
+                {'width': bounds.w, 'height': bounds.h, 'minimized': bool(user.IsIconic(handle))}
+                for handle in self.windows('CapCut') if (bounds := rect(handle))
+            ],
+            'project_locks': sum(1 for _ in self.exporter.ROOT.glob('*/.locked')),
+        }
 
     def current_window(self, name):
         candidates = self.windows(name)

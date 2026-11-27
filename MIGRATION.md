@@ -17,3 +17,5 @@ Before qualifying a future release, run `python -B -m unittest test_completion_m
 ## Phase 2 installation and rollback
 
 Install 1.2.0 alongside the previous release. To roll back, close the panel after its active work has stopped, then use the retained 1.1.0 launcher against the same workspace. Preserve its ledger, migration records and any unfinished journals. Its local panel has a maintenance hold, an explicit qualification gate, process serialization, and a separate fixture ledger. Preserve private chronological rebinding and both historical migration bindings separately. The camera watcher runs only while the optional local launcher is open and reacts to connection by opening the panel. It never submits imports. On a new setup confirm folder configuration, device recognition, numbering, and one disposable native run before enabling live mode.
+
+For 1.2.1 rollback, close the idle panel, restore the saved 1.2.0 qualification marker, and use the retained 1.2.0 launcher. Keep the canonical ledger and both completion bindings in place.

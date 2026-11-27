@@ -1,5 +1,9 @@
 # Current status
 
+## 1.2.1 production verification
+
+Restores an unambiguous minimized CapCut window before applying ordinary focus and project checks. Diagnostics include the failing stage, vlog numbers, queue and window state. The existing production run resumed once per output, verified matching picture, audio, timing and filesystem hashes, and restored the HEVC preset. No additional render was required for packaging.
+
 Phase 1 version 1.1.0 is stable for the qualified Windows laptop running CapCut 9.8.0.4213. It uses the rc4 processing implementation. Clean extraction and 19 automated tests passed without importing Process Vlogs. A complete 100% display-scale cycle recovered from one deliberately interrupted accepted render, delivered a 2,848-frame master and proxy, and restored the 1080p HEVC preset. Windows sleep, wake, shutdown and restart were observed under supervision.
 
 A separate Windows computer has not been qualified. Ambiguous multi-job recovery requires manual review. CapCut, Python, Windows OCR and FFmpeg are separate prerequisites. Private plans, media, settings, receipts and qualification records stay outside this repository. Version 1.0.3 is preserved as a rollback package. Phase 2 version 1.2.0 adds the qualified operator panel for the same laptop.
