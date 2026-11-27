@@ -21,3 +21,5 @@ Install 1.2.0 alongside the previous release. To roll back, close the panel afte
 For 1.2.1 rollback, close the idle panel, restore the saved 1.2.0 qualification marker, and use the retained 1.2.0 launcher. Keep the canonical ledger and both completion bindings in place.
 
 To roll back 1.2.2, close the idle panel, restore the saved 1.2.1 qualification marker, and use the saved 1.2.1 launcher.
+
+To roll back 1.2.3, close the idle panel, restore the saved 1.2.2 qualification marker, and use the saved 1.2.2 launcher. Existing preservation receipts remain compatible.

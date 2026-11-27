@@ -1,5 +1,9 @@
 # Current status
 
+## 1.2.3 camera clearance
+
+Camera clearance checks ancillary receipts by volume-relative path, while supporting earlier DCIM-relative receipts. It requires both preservation copies to match the current source size and SHA-256. Focused tests rejected missing copies and same-size content changes. Both clearance checks passed on the qualified laptop without rendering or formatting.
+
 ## 1.2.2 camera clearance
 
 Camera clearance reads retained content evidence from the workspace and follows verified output migrations and completed filesystem receipts. Disconnect holds while CapCut or an encoder remains active. Format holds for uncovered recordings or ancillary files. Current camera testing matched all retained recordings without exporting any footage.

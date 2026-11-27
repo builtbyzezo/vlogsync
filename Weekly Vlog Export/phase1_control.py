@@ -3,12 +3,55 @@ import argparse
 from filesystem_delivery import folders
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import time
 
 import wve_safety as reliability
 import weekly_vlog_export as weekly
+
+
+def ancillary_files(volume, camera, seen):
+    """List files by volume-relative path, retaining the existing DCIM preview policy."""
+    def scan_error(error):
+        raise error
+
+    dcim = camera.parent
+    assets = []
+    for folder, _, names in os.walk(volume, onerror=scan_error):
+        for name in names:
+            path = Path(folder)/name
+            if path.parent == camera and name in seen:
+                continue
+            if path.is_relative_to(dcim) and path.suffix.casefold()=='.lrv':
+                continue
+            assets.append(path.relative_to(volume).as_posix())
+    return sorted(assets)
+
+
+def preserved_ancillary(volume, dcim, assets, permanent, local):
+    """Require a receipt and two matching copies, then compare with the current source."""
+    preserved = set()
+    for receipt in permanent.glob('*/verification.json'):
+        catalog = json.loads(receipt.read_bytes())
+        local_batch = local/receipt.parent.name
+        for name in set(assets)-preserved:
+            source = volume/name
+            keys = [name]
+            if source.is_relative_to(dcim):
+                # Earlier receipts used paths relative to DCIM.
+                keys.append(source.relative_to(dcim).as_posix())
+            for key in keys:
+                evidence = catalog.get(key)
+                if not evidence:
+                    continue
+                paths = (source,receipt.parent/key,local_batch/key)
+                if all(path.is_file() and path.stat().st_size==evidence['bytes']
+                       and reliability.digest(path)==evidence['sha256'] for path in paths):
+                    preserved.add(name)
+                    break
+    return sorted(preserved)
 
 
 def assess():
@@ -105,21 +148,12 @@ def assess():
     seen = {p.name:weekly.camera.sampled_id(p) for p in weekly.camera.discover_videos(root)}
     if any(p.is_file() and p.suffix.casefold() in weekly.extra_footage.VIDEO for p in weekly.extra_footage.ROOT.rglob('*')):
         issues.append('Extra Footage must be reconciled before format clearance.')
-    dcim=root.parent
-    other=sorted(str(p.relative_to(dcim)) for p in dcim.rglob('*') if p.is_file()
-                 and not (p.parent==root and p.name in seen) and p.suffix.casefold()!='.lrv')
-    misc=sorted(str(p.relative_to(dcim.parent)) for p in (dcim.parent/'MISC').rglob('*') if p.is_file())
-    preserved=[]
-    for record in (records/'Camera preservation').glob('*/verification.json'):
-        catalog=weekly.exports.draft.read(record)
-        local=Path.home()/'Pictures'/'VlogSync Camera Preservation'/record.parent.name
-        for name in other:
-            evidence=catalog.get(Path(name).as_posix())
-            copies=(record.parent/name,local/name)
-            if evidence and all(p.is_file() and p.stat().st_size==evidence['bytes']
-                                and reliability.digest(p)==evidence['sha256'] for p in (dcim/name,*copies)):
-                preserved.append(name)
-    uncovered=sorted(set(other)-set(preserved))+misc
+    dcim = root.parent
+    volume = dcim.parent
+    other = ancillary_files(volume, root, seen)
+    preserved = preserved_ancillary(volume, dcim, other, records/'Camera preservation',
+                                    Path.home()/'Pictures'/'VlogSync Camera Preservation')
+    uncovered = sorted(set(other)-set(preserved))
     if uncovered:
         issues.append('Camera files without verified preservation: '+', '.join(uncovered))
     pending=False
@@ -130,9 +164,9 @@ def assess():
         pending=True
     result = reliability.clearance(expected,seen,candidates,issues=issues,native_pending=pending)
     result['content_scope']='Three sampled source windows per retained role plus the baseline timing and integrity audit.'
-    result['other_camera_assets']=other+misc
+    result['other_camera_assets']=other
     result['uncovered_camera_assets']=uncovered
-    result['other_camera_assets_preserved']=sorted(set(preserved))
+    result['other_camera_assets_preserved']=preserved
     result['disconnect_status'] = ('CapCut or another renderer is open, or a project lock remains. Close it normally before ejecting.' if pending else
                                    'CapCut is closed and the archive renderer is idle. Eject normally.')
     result.update(expected=len(expected),observed=len(seen),camera=str(root),
