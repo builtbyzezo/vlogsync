@@ -36,7 +36,7 @@ def engine(panel):
 
 def inventory(panel):
     if not panel.live:
-        return {n:{'n':n,'date':'2026-11-25'} for n in (281,282,283)}
+        return {n:{'n':n,'date':'2026-11-25'} for n in range(281,288)}
     w=engine(panel)
     from filesystem_delivery import folders
     ledger=w.numbering.read(panel.ledger)
@@ -200,6 +200,29 @@ def prepare(panel, state, numbers, clear, *, just_exported=False):
         w.exports.draft.publish_many(w.exports.ROOT,drafts,store(panel).parent)
 
 
+def open_working(ui, root, name):
+    from desktop_controls import Box, wait_for
+    screen=ui.home() if ui.windows('CapCut') else ui.launch()
+    # On this CapCut build OCR can display a numeric suffix 1 as lowercase l.
+    alternative=name.replace('(1)-copy','(l)-copy')
+    lines=[line for line in screen.lines if ' '.join(w['t'] for w in line) in (name,alternative)]
+    if len(lines)!=1:
+        raise ValueError('CapCut did not show one exact working copy. Open it manually for review.')
+    word=lines[0][0]
+    screen.click(ui.project_open_point(screen,Box(word['x'],word['y'],word['w'],word['h'])),double=True)
+    def opened():
+        if not (root/name/'.locked').is_file():
+            return None
+        try:
+            editor=ui.screen(ui.get_window('CapCut'))
+        except RuntimeError as error:
+            if 'lost the foreground' in str(error):
+                return None
+            raise
+        return editor if ui.editor_for(editor,name) else None
+    return wait_for(opened,'the exact master-backed editor',seconds=30)
+
+
 def native_duplicate(w, name):
     from capcut_ui import CapCut
     from desktop_controls import WinOcr, user, wait_for
@@ -245,6 +268,8 @@ def retrieve(panel,row,name,copy_name):
         raise ValueError('The local registry does not identify this project as a completed download.')
     if (original/'.locked').exists():
         raise ValueError('Close the returned project before preparing the working copy.')
+    source_proxy=media_path(original,read(original/'draft_content.json'))
+    require_hash(source_proxy,row['files']['Proxy']['sha256'])
     w.verify_idle_renderer()
     copy_name=copy_name or native_duplicate(w,name)
     duplicate,copy_record=local_draft(root,copy_name)
@@ -293,6 +318,87 @@ def title(value):
     return value
 
 
+def returned_matches(row, catalog):
+    pattern = rf'Vlog {row["n"]} \([0-9]+\)'
+    expected_cloud = row.get('cloud_entry_id')
+    matches = []
+    for entry in catalog:
+        name = entry.get('draft_name','')
+        if (entry.get('draft_cloud_last_action_download') is True
+                and re.fullmatch(pattern,name)
+                and (not expected_cloud or entry.get('tm_draft_cloud_entry_id') == expected_cloud)):
+            matches.append(name)
+    return sorted(set(matches))
+
+
+def catalog(panel):
+    if not panel.live:
+        return [{'draft_name':f'Vlog {n} (1)','draft_cloud_last_action_download':True}
+                for n in range(281,288)]
+    w=engine(panel)
+    return read(w.exports.ROOT/'root_meta_info.json',{}).get('all_draft_store',[])
+
+
+def retrieval_selection(state, entries, picks):
+    if not isinstance(picks,list) or not 1<=len(picks)<=20:
+        raise ValueError('Select up to 20 returned projects.')
+    jobs={}
+    for pick in picks:
+        n=pick['n']
+        row=state.get(str(n),{})
+        if type(n) is not int or row.get('state')!='submitted' or n in jobs:
+            raise ValueError('Select an exact confirmed submission once.')
+        matches=returned_matches(row,entries)
+        name=pick.get('returned')
+        if not name and len(matches)==1:
+            name=matches[0]
+        if name not in matches:
+            raise ValueError(f'Choose a completed local return for Vlog {n}.')
+        jobs[n]=name
+    return jobs
+
+
+def retrieve_job(panel, picks):
+    path=store(panel)
+    state=read(path,{})
+    jobs=retrieval_selection(state,catalog(panel),picks)
+    failures=[]
+    if panel.live:
+        w=engine(panel)
+        lease=w.local_lock().open('a+b')
+    else:
+        lease=None
+    try:
+        if lease:
+            lease.seek(0)
+            w.msvcrt.locking(lease.fileno(),w.msvcrt.LK_NBLCK,1)
+        for index,(n,name) in enumerate(jobs.items()):
+            atomic(panel.state,{'status':'processing','operation':f'Preparing Vlog {n}',
+                                 'editor_retrieval':True,'done':index,'total':len(jobs)})
+            row=state[str(n)]
+            try:
+                if panel.live:
+                    root=w.exports.ROOT
+                    existing=name+'-copy'
+                    retrieve(panel,row,name,existing if (root/existing).is_dir() else '')
+                else:
+                    row.update(state='review',returned=name,working=name+'-copy',revision='fixture-revision')
+                row['master_verified']=True
+                row.pop('retrieval_error',None)
+            except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as error:
+                from wve_safety import diagnostic
+                row['retrieval_error']=diagnostic(error,None)['message']
+                failures.append(n)
+            atomic(path,state)
+        atomic(panel.state,{'status':'error' if failures else 'complete',
+                           'operation':'Preparing editor returns',
+                           'message':f'{len(jobs)-len(failures)} of {len(jobs)} working copies ready.',
+                           'editor_retrieval':True,'done':len(jobs),'total':len(jobs)})
+    finally:
+        if lease:
+            lease.close()
+
+
 def action(panel,name,data):
     path=store(panel)
     state=read(path,{})
@@ -307,22 +413,21 @@ def action(panel,name,data):
                 state[str(n)]=row | {'state':'submitted','destination':settings(panel)}
         atomic(path,state)
         listed=[dict(state.get(str(n),row|{'state':'uncertain'})) for n,row in sorted(rows.items())]
-        if panel.live:
-            w=engine(panel)
-            catalog=read(w.exports.ROOT/'root_meta_info.json',{}).get('all_draft_store',[])
-            for row in listed:
-                if row['state']!='submitted':
-                    continue
-                pattern=rf'Vlog {row["n"]} \([0-9]+\)'
-                row['local_returns']=[entry['draft_name'] for entry in catalog
-                    if entry.get('draft_cloud_last_action_download') is True
-                    and re.fullmatch(pattern,entry['draft_name'])]
+        entries=catalog(panel)
+        for row in listed:
+            if row['state']=='submitted':
+                row['local_returns']=returned_matches(row,entries)
         return {'rows':listed,'space':settings(panel)}
+    if name=='editor-retrieve-batch':
+        retrieval_selection(state,catalog(panel),data['picks'])
+        return panel.spawn('editor-retrieve-batch',{'picks':data['picks']})
     if name=='editor-prepare':
         numbers=data['numbers']
-        if not isinstance(numbers,list) or not numbers or len(numbers)>20 or any(type(n) is not int for n in numbers):
-            raise ValueError('Select up to 20 verified projects.')
-        prepare(panel,state,sorted(set(numbers)),data.get('checked_space') is True)
+        if not isinstance(numbers,list) or not numbers or len(numbers)>250 or any(type(n) is not int for n in numbers):
+            raise ValueError('Select up to 250 verified projects.')
+        if any(state.get(str(n),{}).get('state')!='unshared' for n in numbers):
+            raise ValueError('Select only projects confirmed as unshared.')
+        prepare(panel,state,sorted(set(numbers)),True)
     elif name=='editor-resume':
         if not panel.live:
             raise ValueError('There is no native publication in the visual fixture.')
@@ -353,18 +458,40 @@ def action(panel,name,data):
             return panel.spawn('editor-export',{'numbers':numbers})
     else:
         row=state.get(str(data['n']),{})
-        if name=='editor-submitted' and not row and data.get('confirmed') is True:
+        if name=='editor-mark-unshared' and not row and data.get('checked_space') is True:
+            number=data['n']
+            rows=inventory(panel)
+            if type(number) is not int or number not in rows or confirmed(panel,number):
+                raise ValueError('No eligible verified pair for that vlog.')
+            state[str(number)]=rows[number] | {'state':'unshared'}
+            atomic(path,state)
+            return {'saved':True}
+        if name=='editor-open' and row.get('state') in ('review','approved'):
+            if panel.live:
+                w=engine(panel)
+                from capcut_ui import CapCut
+                from desktop_controls import WinOcr
+                draft,entry=local_draft(w.exports.ROOT,row['working'])
+                if entry['draft_id']!=row['working_id']:
+                    raise ValueError('The exact working copy changed.')
+                w.verify_idle_renderer()
+                with WinOcr() as ocr:
+                    ui=CapCut(w.exports,ocr)
+                    locks=[p.parent.name for p in w.exports.ROOT.glob('*/.locked')]
+                    if locks and locks!=[row['working']]:
+                        raise ValueError('Close the currently open CapCut editor first.')
+                    if not locks:
+                        open_working(ui,w.exports.ROOT,row['working'])
+                    elif not ui.editor_for(ui.screen(ui.get_window('CapCut')),row['working']):
+                        raise ValueError('Cannot verify the open editor.')
+            return {'opened':True}
+        if name=='editor-submitted' and (not row or row.get('state')=='unshared') and data.get('confirmed') is True:
             number=data['n']
             if type(number) is not int or number not in (rows:=inventory(panel)):
                 raise ValueError('No verified pair for the confirmed upload.')
             row=state[str(number)]=rows[number] | {'state':'prepared','destination':settings(panel)}
         if name=='editor-submitted' and row.get('state')=='prepared' and data.get('confirmed') is True:
             row.update(state='submitted',confirmed_utc=datetime.now(timezone.utc).isoformat())
-        elif name=='editor-retrieve' and row.get('state') in ('submitted','review'):
-            if panel.live:
-                retrieve(panel,row,data['returned'],data.get('working',''))
-            else:
-                row.update(state='review',working=f"Vlog {row['n']} (1)-copy",revision='fixture-revision')
         elif name=='editor-approve' and row.get('state') in ('review','approved') and data.get('revision')==row.get('revision'):
             if panel.live:
                 w=engine(panel)
@@ -430,8 +557,8 @@ def final_job(panel, numbers):
                     locks=[p.parent.name for p in w.exports.ROOT.glob('*/.locked')]
                     if locks and locks!=[row['working']]:
                         raise ValueError('Close other CapCut editors before the final export.')
-                    if not ui.windows('CapCut'):
-                        ui.launch()
+                    if not locks:
+                        open_working(ui,w.exports.ROOT,row['working'])
                     frame=ui.prepare_export(item,'Master',render)
                     area=Box(frame.bounds.w*2//3,frame.bounds.h-95,frame.bounds.w//3,95)
                     frame.button('Export',area)

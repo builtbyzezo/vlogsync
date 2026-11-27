@@ -4,7 +4,8 @@ import tempfile
 import unittest
 
 from panel import Panel
-from editor_handoff import revision, title
+from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store
+from panel import read
 
 
 class HandoffTests(unittest.TestCase):
@@ -26,12 +27,16 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(self.rows()[282]['state'],'uncertain')
         with self.assertRaises(ValueError):
             self.act('prepare',numbers=[282])
-        self.act('prepare',numbers=[281,282],checked_space=True)
+        self.act('mark-unshared',n=282,checked_space=True)
+        with self.assertRaises(ValueError):
+            self.act('prepare',numbers=[281,282])
+        self.act('prepare',numbers=[282])
         self.assertEqual(self.rows()[281]['state'],'submitted')
         self.assertEqual(self.rows()[282]['state'],'prepared')
         self.panel=Panel(self.panel.root,False)
         self.act('submitted',n=282,confirmed=True)
-        self.act('retrieve',n=282,returned='Vlog 282 (1)')
+        retrieve_job(self.panel,[{'n':282}])
+        self.assertTrue(self.rows()[282]['master_verified'])
         with self.assertRaises(ValueError):
             self.act('approve',n=282,revision='stale',title='Approved edit')
         self.act('approve',n=282,revision=self.rows()[282]['revision'],title='Approved edit')
@@ -39,6 +44,20 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(self.rows()[282]['state'],'exported')
         with self.assertRaises(ValueError):
             self.act('export',numbers=[282])
+
+    def test_completed_download_matching_holds_ambiguity_and_checks_cloud_binding(self):
+        state={'281':{'n':281,'state':'submitted','cloud_entry_id':74}}
+        matches=[
+            {'draft_name':'Vlog 281 (1)','draft_cloud_last_action_download':True,'tm_draft_cloud_entry_id':74},
+            {'draft_name':'Vlog 281 (2)','draft_cloud_last_action_download':True,'tm_draft_cloud_entry_id':74},
+            {'draft_name':'Vlog 281 (3)','draft_cloud_last_action_download':True,'tm_draft_cloud_entry_id':75},
+            {'draft_name':'Vlog 281 (4)','draft_cloud_last_action_download':False,'tm_draft_cloud_entry_id':74}]
+        with self.assertRaises(ValueError):
+            retrieval_selection(state,matches,[{'n':281}])
+        with self.assertRaises(ValueError):
+            retrieval_selection(state,matches,[{'n':281,'returned':'Vlog 281 (3)'}])
+        self.assertEqual(retrieval_selection(state,matches,[{'n':281,'returned':'Vlog 281 (2)'}]),{281:'Vlog 281 (2)'})
+        self.assertEqual(retrieval_selection(state,matches[:1],[{'n':281}]),{281:'Vlog 281 (1)'})
 
     def test_revision_includes_effect_and_rejects_unsafe_title(self):
         folder=self.panel.root

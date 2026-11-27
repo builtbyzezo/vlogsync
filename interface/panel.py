@@ -235,7 +235,7 @@ class Panel:
         previous=read(self.state,{'status':'ready'})
         atomic(self.state,{**previous,**payload,'status':'scanning' if action=='scan' else 'processing',
                            'operation':'Scanning recordings' if action=='scan' else 'Preparing exports',
-                           'message':'','run':payload.get('run'),'editor_operation':action=='editor-export'})
+                           'message':'','run':payload.get('run'),'editor_operation':action=='editor-export','editor_retrieval':action=='editor-retrieve-batch'})
         try:
             self.child=subprocess.Popen([sys.executable,'-B',str(Path(__file__)), '--workspace',str(self.root),
                                      *(['--native-pilot'] if self.native_pilot else ['--live'] if self.live else []),'--worker',action,json.dumps(payload)],
@@ -264,6 +264,9 @@ def journal_progress(plan, queue):
 def worker(panel, action, data):
     from simulated_controller import simulate
     try:
+        if action=='editor-retrieve-batch':
+            from editor_handoff import retrieve_job
+            return retrieve_job(panel,data['picks'])
         if not panel.live:
             return simulate(panel,action,data)
         if action=='editor-export':

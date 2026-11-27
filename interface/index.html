@@ -35,7 +35,7 @@
 <footer><button data-folder="master" disabled>Masters ↗</button><button data-folder="proxy" disabled>Proxies ↗</button><button data-folder="edited" disabled>Edited Videos ↗</button><small id="mode"></small></footer>
 </div>
 <dialog id="editor-dialog"><form method="dialog"><div class="dialog-header"><h2 id="editor-heading"></h2><button aria-label="Close editor workflow">×</button></div></form>
-<div class="settings-body"><p id="editor-guide"></p><div id="editor-rows" class="settings-list"></div><div id="editor-actions" class="controls"></div></div></dialog>
+<div class="settings-body"><strong id="editor-destination" class="editor-destination"></strong><p id="editor-guide"></p><p id="editor-progress" class="muted" aria-live="polite" hidden></p><div id="editor-rows" class="settings-list"></div><div id="editor-actions" class="controls"></div></div></dialog>
 <dialog id="settings"><form method="dialog"><div class="dialog-header"><h2>Settings</h2><button aria-label="Close settings">×</button></div></form>
 
 <div class="settings-body settings-list">
@@ -56,5 +56,7 @@
 <button class="solid" id="settings-save">Save preferences</button></div></dialog>
 <dialog id="number-dialog"><form method="dialog"><div class="dialog-header"><h2>Edit last assigned number</h2><button aria-label="Close number editor">×</button></div></form>
 <form class="settings-body" id="number-form"><label>Last assigned number <input type="number" min="0" max="999999" required id="number"></label><label>Recording date <input id="date" type="date" required></label><p>Existing vlog assignments are protected.</p><label class="check"><input type="checkbox" required> I checked this number and date.</label><button class="solid">Save number</button></form></dialog>
+<dialog id="confirm-dialog"><form method="dialog"><div class="dialog-header"><h2>Confirm action</h2><button value="cancel" aria-label="Close confirmation">×</button></div>
+<div class="settings-body"><p id="confirm-message"></p><div class="controls"><button class="outline" value="cancel" autofocus>Cancel</button><button class="solid" value="accept">Confirm</button></div></div></form></dialog>
 <div id="notice" role="status" hidden></div>
 </body></html>
