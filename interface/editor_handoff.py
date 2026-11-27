@@ -18,7 +18,12 @@ PHASE3 = ENGINE.parent/'interface'/'Runs'/'Editor handoff'
 def store(panel):
     import hashlib
     workspace_key=hashlib.sha256(str(panel.root).casefold().encode()).hexdigest()[:16]
-    root = PHASE3/workspace_key if panel.live else panel.root
+    if not panel.live:
+        root=panel.root
+    elif panel.native_pilot:
+        root=PHASE3/workspace_key
+    else:
+        root=Path(os.environ['LOCALAPPDATA'])/'VlogSync'/'Editor handoff'/workspace_key
     root.mkdir(parents=True, exist_ok=True)
     return root/'editor-handoff.json'
 
@@ -206,14 +211,21 @@ def prepare(panel, state, numbers, clear, *, just_exported=False):
 
 def open_working(ui, root, name):
     from desktop_controls import Box, wait_for
-    screen=ui.home() if ui.windows('CapCut') else ui.launch()
-    # On this CapCut build OCR can display a numeric suffix 1 as lowercase l.
+    if not ui.windows('CapCut'):
+        ui.launch()
+    # Home can appear before the project list finishes populating.
     alternative=name.replace('(1)-copy','(l)-copy')
-    lines=[line for line in screen.lines if ' '.join(w['t'] for w in line) in (name,alternative)]
-    if len(lines)!=1:
-        raise ValueError('CapCut did not show one exact working copy. Open it manually for review.')
-    word=lines[0][0]
-    screen.click(ui.project_open_point(screen,Box(word['x'],word['y'],word['w'],word['h'])),double=True)
+    def working_row():
+        screen=ui.await_home()
+        lines=[line for line in screen.lines if ' '.join(w['t'] for w in line) in (name,alternative)]
+        if len(lines)>1:
+            raise ValueError('More than one working project matches. Open the exact draft manually.')
+        if lines:
+            word=lines[0][0]
+            return screen,Box(word['x'],word['y'],word['w'],word['h'])
+        return None
+    screen,hit=wait_for(working_row,'one exact working-copy row',seconds=15)
+    screen.click(ui.project_open_point(screen,hit),double=True)
     def opened():
         if not (root/name/'.locked').is_file():
             return None

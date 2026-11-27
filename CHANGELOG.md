@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+A two-project native Space round trip passed with operator-controlled upload and retrieval. A controller restart between upload confirmations preserved the partial batch. Duplicate submissions and stale approvals were rejected. Both matching returned edits received verified master substitutions and exported once to the isolated destination as 1080p HEVC with matching timeline duration and verified filesystem hashes. CapCut restored its preset. A second computer remains unqualified.
+
 ## 1.2.3
 
 Camera clearance checks ancillary receipts by volume-relative path, while supporting earlier DCIM-relative receipts. It requires both preservation copies to match the current source size and SHA-256. Focused tests rejected missing copies and same-size content changes. Both clearance checks passed on the qualified laptop without rendering or formatting.

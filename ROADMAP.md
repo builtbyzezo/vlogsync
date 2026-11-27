@@ -11,3 +11,7 @@ Version 1.2.0 provides a local operator panel with explicit controller actions. 
 ## Phase 2 qualification
 
 The qualified laptop completed a disposable native panel cycle with filesystem verification and preset restoration. Continue documenting any device-specific limitations before activating other computers. CapCut Space, edited video export and publishing remain planned.
+
+## Phase 3
+
+Version 1.3.0 qualifies local editor handoff, operator-controlled native Space transfers, verified master substitution and reviewed final batch export on the supported laptop. Publishing automation and second-computer qualification remain separate.
