@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from panel import Panel
-from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store, record_new_pairs, eligible_returns
+from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store, record_new_pairs, eligible_returns, returned_matches, media_binding, historical_pair
 from panel import read
 
 
@@ -82,6 +82,36 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(self.rows()[281]['state'],'review')
         self.act('approve-export',picks=picks,confirmed=True)
         self.assertEqual([self.rows()[n]['state'] for n in (281,282)],['exported','exported'])
+
+    def test_historical_return_without_suffix_and_missing_footage(self):
+        row={'n':142,'state':'downloaded'}
+        entries=[{'draft_name':'VLOG 142 EDITED','draft_cloud_last_action_download':True},
+                 {'draft_name':'VLOG 142 EDITED-copy','draft_cloud_last_action_download':True},
+                 {'draft_name':'Vlog 142','draft_cloud_last_action_download':False}]
+        self.assertEqual(returned_matches(row,entries),['VLOG 142 EDITED'])
+        self.assertEqual(retrieval_selection({'142':row},entries,[{'n':142}]),{142:'VLOG 142 EDITED'})
+        draft=self.panel.root/'VLOG 142 EDITED'
+        draft.mkdir()
+        doc={'materials':{'videos':[{'path':'##_draftpath_placeholder_abcd_##/Footages/Vlog 142.mp4'}]}}
+        self.assertEqual(media_binding(draft,doc,allow_missing=True)[0],draft/'Footages/Vlog 142.mp4')
+        with self.assertRaises(ValueError):
+            media_binding(draft,doc)
+        doc['materials']['videos'][0]['path']='##_draftpath_placeholder_abcd_##/../Vlog 142.mp4'
+        with self.assertRaises(ValueError):
+            media_binding(draft,doc,allow_missing=True)
+
+    def test_archive_match_rejects_conflicting_identity(self):
+        folders={role:self.panel.root/role for role in ('Master','Proxy')}
+        rows=[]
+        for role,(width,height) in zip(folders,((1920,1080),(1280,720)),strict=True):
+            folder=folders[role]
+            folder.mkdir()
+            (folder/'Vlog 142.mp4').write_bytes(b'fixture')
+            rows.append({'name':'Vlog 142.mp4','trashed':False,'size':'7','sha256Checksum':'a'*64,
+                         'videoMediaMetadata':{'width':width,'height':height}})
+        self.assertEqual(set(historical_pair(142,folders,rows)),{'Master','Proxy'})
+        conflict=dict(rows[-1],sha256Checksum='b'*64)
+        self.assertFalse(historical_pair(142,folders,[*rows,conflict]))
 
     def test_revision_includes_effect_and_rejects_unsafe_title(self):
         folder=self.panel.root

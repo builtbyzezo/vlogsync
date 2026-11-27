@@ -90,8 +90,13 @@ def confirmed(panel, number):
     return receipt.get('status')=='Confirmed manual submission' and receipt.get('project')==f'Vlog {number}'
 
 
+def media_digest(file):
+    from wve_safety import digest
+    return digest(file)
+
+
 def require_hash(file, expected):
-    if sealed(file)!=expected:
+    if media_digest(file)!=expected:
         raise ValueError('A verified media file changed. Review its receipt before proceeding.')
 
 
@@ -112,8 +117,17 @@ def revision(draft):
     return hashlib.sha256(json.dumps(documents,sort_keys=True).encode()).hexdigest()
 
 
+PROJECT_NAME = re.compile(r'Vlog (?P<number>[1-9][0-9]*)(?: EDITED)?(?: \([0-9]+\))?(?:-copy)?',re.I)
+RETURN_STATES = ('submitted','downloaded')
+
+
+def project_number(name):
+    match=PROJECT_NAME.fullmatch(name)
+    return int(match['number']) if match else None
+
+
 def local_draft(root, name):
-    if not re.fullmatch(r'Vlog [0-9]+(?: \([0-9]+\))?(?:-copy)?',name):
+    if not isinstance(name,str) or not project_number(name):
         raise ValueError('Use an exact numbered CapCut project name.')
     row=[x for x in read(root/'root_meta_info.json',{})['all_draft_store'] if x['draft_name']==name]
     path=root/name
@@ -122,19 +136,87 @@ def local_draft(root, name):
     return path,row[0]
 
 
-def media_path(draft, doc):
-    paths=set()
+def media_binding(draft, doc, *, allow_missing=False):
+    number=project_number(draft.name)
+    bindings={}
     for video in doc['materials']['videos']:
-        match=re.fullmatch(r'##_draftpath_placeholder_[A-Fa-f0-9-]+_##/(materials/video/[^/\\]+\.mp4)',video['path'])
-        if not match:
-            raise ValueError('Unexpected video reference. Review this project manually.')
-        paths.add(match[1])
-    if len(paths)!=1:
-        raise ValueError('The edit must reference exactly one bundled proxy.')
-    file=draft/paths.pop()
-    if not file.is_file() or file.resolve()!=file.absolute():
-        raise ValueError('The bundled proxy is unavailable or redirected.')
-    return file
+        value=video.get('path','')
+        if not value:
+            continue
+        match=re.fullmatch(r'##_draftpath_placeholder_[A-Fa-f0-9-]+_##/(.+)',value)
+        rel=Path(match[1]) if match else None
+        if rel is None or rel.anchor or ':' in str(rel) or '..' in rel.parts:
+            raise ValueError('Unexpected external video reference. Review this project manually.')
+        candidate=draft/rel
+        if candidate.resolve()!=candidate.absolute():
+            raise ValueError('A bundled video is redirected outside its expected path.')
+        if rel.name.casefold()==f'vlog {number}.mp4':
+            bindings.setdefault(candidate,[]).append(video)
+        elif not candidate.is_file():
+            raise ValueError('An additional video asset is missing. Restore it before preparing the edit.')
+    for audio in doc['materials'].get('audios',[]):
+        value=audio.get('path','')
+        if value:
+            match=re.fullmatch(r'##_draftpath_placeholder_[A-Fa-f0-9-]+_##/(.+)',value)
+            rel=Path(match[1]) if match else None
+            if (rel is None or rel.anchor or ':' in str(rel) or '..' in rel.parts
+                    or not (draft/rel).is_file() or (draft/rel).resolve()!=(draft/rel).absolute()):
+                raise ValueError('An additional audio asset is unavailable. Restore it before preparing the edit.')
+    if len(bindings)!=1:
+        raise ValueError('The numbered proxy reference is missing or ambiguous.')
+    file, videos=next(iter(bindings.items()))
+    if not allow_missing and not file.is_file():
+        raise ValueError('The bundled media is unavailable.')
+    return file,videos
+
+
+def media_path(draft, doc):
+    return media_binding(draft, doc)[0]
+
+
+def historical_pair(number, destinations, archive):
+    files={}
+    for role,dimensions in (('Master',(1920,1080)),('Proxy',(1280,720))):
+        path=destinations[role]/f'Vlog {number}.mp4'
+        if not path.is_file():
+            return {}
+        size=path.stat().st_size
+        matching=set()
+        for row in archive:
+            metadata=row.get('videoMediaMetadata',{})
+            checksum=row.get('sha256Checksum','')
+            if (row.get('name','').casefold()==path.name.casefold() and row.get('trashed') is False
+                    and (metadata.get('width'),metadata.get('height'))==dimensions
+                    and str(row.get('size'))==str(size) and re.fullmatch(r'[a-f0-9]{64}',checksum)):
+                matching.add(checksum)
+        if len(matching)!=1:
+            return {}
+        files[role]={'path':str(path),'sha256':next(iter(matching))}
+    return files
+
+
+def discover_historical(panel, state, entries, known):
+    if not panel.live or panel.native_pilot:
+        return
+    w=engine(panel)
+    from filesystem_delivery import folders
+    archive=read(panel.root/'Records/Historical Drive archive inventory.json',{}).get('files',[])
+    historical=w.numbering.read(panel.ledger)['observed_through']
+    destinations=folders(w)
+    for entry in entries:
+        name=entry.get('draft_name','')
+        n=project_number(name)
+        if not n or name.casefold().endswith('-copy') or entry.get('draft_cloud_last_action_download') is not True:
+            continue
+        if str(n) in state and state[str(n)]['state']!='history-held':
+            continue
+        row=known.get(n)
+        if row is not None:
+            state[str(n)]=row | {'state':'downloaded'}
+        elif n<=historical:
+            files=historical_pair(n,destinations,archive)
+            state[str(n)]={'n':n,'state':'downloaded' if files else 'history-held','historical':True,
+                           'files':files,'retrieval_error':None if files else 'Verified archive pair unavailable or ambiguous.'}
 
 
 def timing(w, path):
@@ -142,22 +224,92 @@ def timing(w, path):
     def timeline(stream):
         result=json.loads(subprocess.check_output([str(w.exports.PROBE),'-v','error','-select_streams',
             stream,'-show_streams','-show_packets','-show_entries','stream=codec_name,width,height,time_base,sample_rate,channels:packet=pts,duration',
-            '-of','json',str(path)],timeout=180))
+            '-of','json',str(path)],timeout=600))
         info,=result['streams']
         base=Fraction(info['time_base'])
         return info,sorted((int(row['pts'])*base,int(row['duration'])*base) for row in result['packets'])
     return timeline('v:0'),timeline('a:0')
 
 
-def validate_pair(w, files):
+def validate_pair(w, files, *, historical=False):
+    from fractions import Fraction
     for row in files.values():
         require_hash(Path(row['path']),row['sha256'])
     (m,mt),(a,at)=timing(w,Path(files['Master']['path']))
     (p,pt),(b,bt)=timing(w,Path(files['Proxy']['path']))
     if ((m.get('codec_name'), m.get('width'),m.get('height'))!=('hevc',1920,1080)
         or (p.get('codec_name'),p.get('width'),p.get('height'))!=('h264',1280,720)
-        or mt!=pt or at!=bt or any(a[k]!=b[k] for k in ('codec_name','sample_rate','channels'))):
-        raise ValueError('Master and proxy presentation timing or media profiles differ.')
+        or not mt or mt!=pt or not at or not bt
+        or (a.get('codec_name'),b.get('codec_name'))!=('aac','aac') or a.get('channels')!=b.get('channels')):
+        raise ValueError('Master and proxy picture timing or media profiles differ.')
+    needs_audio = at!=bt or a['sample_rate']!=b['sample_rate']
+    if needs_audio:
+        # Legacy encodes may use different AAC sample rates. Do not replace editor
+        # audio in that case. The proxy's packet timing and bytes must survive the mux.
+        if not historical or abs((at[-1][0]+at[-1][1])-(bt[-1][0]+bt[-1][1]))>Fraction(1,1000):
+            raise ValueError('Master and proxy audio timing is incompatible.')
+    return round((pt[-1][0]+pt[-1][1])*1_000_000),needs_audio
+
+
+def staged_legacy_sources(files, proof):
+    """Verify one local copy of each large archived input for repeatable qualification."""
+    from wve_safety import MARGIN
+    directory=proof/'Verified inputs'
+    directory.mkdir(parents=True,exist_ok=True)
+    staged={}
+    for role,row in files.items():
+        path=directory/f'{role}.mp4'
+        source=Path(row['path'])
+        if not path.exists():
+            partial=path.with_suffix('.partial')
+            if partial.exists():
+                # Continue only after comparing the saved prefix to the source.
+                offset=partial.stat().st_size
+            else:
+                offset=0
+            if offset>source.stat().st_size or shutil.disk_usage(directory).free<source.stat().st_size-offset+MARGIN:
+                raise ValueError('Historical staging has an invalid checkpoint or insufficient local storage.')
+            with source.open('rb') as src:
+                if offset:
+                    with partial.open('rb') as previous:
+                        while block:=previous.read(8*1024**2):
+                            if src.read(len(block))!=block:
+                                raise ValueError('Historical staging checkpoint does not match.')
+                with partial.open('ab' if partial.exists() else 'xb') as dst:
+                    shutil.copyfileobj(src,dst,8*1024**2)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+            require_hash(partial,row['sha256'])
+            partial.rename(path)
+        staged[role]=row | {'path':str(path)}
+    return staged
+
+
+def packet_identity(w, path, stream):
+    from fractions import Fraction
+    result=json.loads(subprocess.check_output([str(w.exports.PROBE),'-v','error','-select_streams',stream,
+        '-show_streams','-show_packets','-show_data_hash','SHA256','-show_entries',
+        'stream=time_base:packet=pts,dts,duration,data_hash,side_data_list','-of','json',str(path)],timeout=600))
+    base=Fraction(result['streams'][0]['time_base'])
+    return [(int(p['pts'])*base,int(p['dts'])*base,int(p['duration'])*base,
+             p['data_hash'],p.get('side_data_list',[])) for p in result['packets']]
+
+
+def master_with_proxy_audio(w, files, proof):
+    master=Path(files['Master']['path'])
+    proxy=Path(files['Proxy']['path'])
+    output=proof/'Master picture with proxy audio.mp4'
+    if not output.exists():
+        from wve_safety import MARGIN
+        if shutil.disk_usage(proof).free<master.stat().st_size+proxy.stat().st_size+MARGIN:
+            raise ValueError('Insufficient local space to preserve proxy audio.')
+        subprocess.run([str(w.exports.FFMPEG),'-nostdin','-v','error','-xerror','-n','-i',str(master),
+                        '-i',str(proxy),'-map','0:v:0','-map','1:a:0','-c','copy',
+                        '-tag:v','hvc1',str(output)],check=True,timeout=600)
+    for stream,source in (('v:0',master),('a:0',proxy)):
+        if packet_identity(w,output,stream)!=packet_identity(w,source,stream):
+            raise ValueError('The working media did not preserve the original packets.')
+    return output,media_digest(output)
 
 
 def prepare(panel, state, numbers, clear, *, just_exported=False):
@@ -217,7 +369,7 @@ def open_working(ui, root, name):
     alternative=name.replace('(1)-copy','(l)-copy')
     def working_row():
         screen=ui.await_home()
-        lines=[line for line in screen.lines if ' '.join(w['t'] for w in line) in (name,alternative)]
+        lines=[line for line in screen.lines if ' '.join(w['t'] for w in line).casefold() in (name.casefold(),alternative.casefold())]
         if len(lines)>1:
             raise ValueError('More than one working project matches. Open the exact draft manually.')
         if lines:
@@ -277,15 +429,29 @@ def retrieve(panel,row,name,copy_name):
     w=engine(panel)
     root=w.exports.ROOT
     original,record=local_draft(root,name)
-    expected_name=rf'Vlog {row["n"]} \([0-9]+\)'
-    if not re.fullmatch(expected_name,name):
-        raise ValueError('Select the exact returned project from Keep both.')
+    if project_number(name)!=row['n'] or name.casefold().endswith('-copy'):
+        raise ValueError('The returned project does not match the selected vlog.')
     if record.get('draft_cloud_last_action_download') is not True:
         raise ValueError('The local registry does not identify this project as a completed download.')
     if (original/'.locked').exists():
         raise ValueError('Close the returned project before preparing the working copy.')
-    source_proxy=media_path(original,read(original/'draft_content.json'))
-    require_hash(source_proxy,row['files']['Proxy']['sha256'])
+    original_doc=read(original/'draft_content.json')
+    source_proxy,videos=media_binding(original,original_doc,allow_missing=row.get('historical',False))
+    if source_proxy.is_file():
+        require_hash(source_proxy,row['files']['Proxy']['sha256'])
+    proof=store(panel).parent/('Returned-'+record['draft_id'])
+    files=staged_legacy_sources(row['files'],proof) if row.get('historical') else row['files']
+    duration,needs_audio=validate_pair(w,files,historical=row.get('historical',False))
+    if not source_proxy.is_file():
+        if any((video.get('width'),video.get('height'),video.get('duration'),video.get('has_audio'))
+               !=(1280,720,duration,True) for video in videos):
+            raise ValueError('The missing proxy reference does not match the verified archive timing and profile.')
+        ids={video['id'] for video in videos}
+        spans=[segment['source_timerange'] for track in original_doc['tracks'] for segment in track['segments']
+               if segment.get('material_id') in ids]
+        if not spans or any(span['start']<0 or span['duration']<=0
+           or span['start']+span['duration']>duration for span in spans):
+            raise ValueError('Saved edits exceed the verified historical media timing.')
     w.verify_idle_renderer()
     copy_name=copy_name or native_duplicate(w,name)
     duplicate,copy_record=local_draft(root,copy_name)
@@ -294,38 +460,45 @@ def retrieve(panel,row,name,copy_name):
         raise ValueError('Use Keep both, then CapCut Duplicate, and select the exact local copy.')
     w.verify_idle_renderer(allow_capcut_previews=False)
     w.exports.draft.require_idle(root)
-    proof=store(panel).parent/('Returned-'+record['draft_id'])
     original_revision=revision(original)
     if revision(duplicate)!=original_revision:
         raise ValueError('The selected copy does not have the same saved edits.')
-    src=media_path(original,read(original/'draft_content.json'))
-    target=media_path(duplicate,read(duplicate/'draft_content.json'))
-    if src.relative_to(original)!=target.relative_to(duplicate):
+    target,_=media_binding(duplicate,read(duplicate/'draft_content.json'),allow_missing=row.get('historical',False))
+    if source_proxy.relative_to(original)!=target.relative_to(duplicate):
         raise ValueError('The duplicate has a different media binding.')
-    require_hash(src,row['files']['Proxy']['sha256'])
-    target_hash=sealed(target)
-    if target_hash not in (row['files']['Proxy']['sha256'],row['files']['Master']['sha256']):
+    if needs_audio:
+        working_source,working_hash=master_with_proxy_audio(w,files,proof)
+    else:
+        working_source,working_hash=Path(files['Master']['path']),files['Master']['sha256']
+    target_hash=media_digest(target) if target.is_file() else None
+    if target_hash not in (None,row['files']['Proxy']['sha256'],working_hash):
         raise ValueError('Unexpected bundled media in the working copy.')
-    validate_pair(w,row['files'])
     snapshot={p.relative_to(original).as_posix():sealed(p) for p in original.rglob('*') if p.is_file()}
     backup=proof/'Untouched'
     if not backup.exists():
         shutil.copytree(original,backup)
     if snapshot!={p.relative_to(backup).as_posix():sealed(p) for p in backup.rglob('*') if p.is_file()}:
         raise ValueError('The original and preservation copy do not match.')
-    if target_hash!=row['files']['Master']['sha256']:
+    if target_hash!=working_hash:
         temp=target.with_suffix('.master-partial')
         if not temp.exists():
-            with temp.open('xb') as dst,Path(row['files']['Master']['path']).open('rb') as source:
+            with temp.open('xb') as dst,working_source.open('rb') as source:
                 shutil.copyfileobj(source,dst)
                 dst.flush()
                 os.fsync(dst.fileno())
-        require_hash(temp,row['files']['Master']['sha256'])
-        require_hash(target,row['files']['Proxy']['sha256'])
-        os.replace(temp,target)
+        require_hash(temp,working_hash)
+        if target_hash is None:
+            if target.exists():
+                raise ValueError('A new bundled file appeared during preparation.')
+            temp.rename(target)  # Windows refuses to replace an existing path.
+        else:
+            require_hash(target,row['files']['Proxy']['sha256'])
+            os.replace(temp,target)
     if revision(duplicate)!=original_revision:
         raise ValueError('The working timeline changed during substitution.')
-    row.update(state='review',returned=name,working=copy_name,working_id=copy_record['draft_id'],revision=original_revision)
+    row.update(state='review',returned=name,working=copy_name,working_id=copy_record['draft_id'],revision=original_revision,working_media_sha256=working_hash)
+    if row.get('historical') and abs(float(original_doc.get('fps',0))-30000/1001)>.001:
+        row['export_hold']='The historical timeline frame rate requires separate final export qualification.'
 
 
 def title(value):
@@ -335,13 +508,12 @@ def title(value):
 
 
 def returned_matches(row, catalog):
-    pattern = rf'Vlog {row["n"]} \([0-9]+\)'
     expected_cloud = row.get('cloud_entry_id')
     matches = []
     for entry in catalog:
         name = entry.get('draft_name','')
         if (entry.get('draft_cloud_last_action_download') is True
-                and re.fullmatch(pattern,name)
+                and project_number(name)==row['n'] and not name.casefold().endswith('-copy')
                 and (not expected_cloud or entry.get('tm_draft_cloud_entry_id') == expected_cloud)):
             matches.append(name)
     return sorted(set(matches))
@@ -362,7 +534,7 @@ def retrieval_selection(state, entries, picks):
     for pick in picks:
         n=pick['n']
         row=state.get(str(n),{})
-        if type(n) is not int or row.get('state')!='submitted' or n in jobs:
+        if type(n) is not int or row.get('state') not in RETURN_STATES or n in jobs:
             raise ValueError('Select an exact confirmed submission once.')
         matches=returned_matches(row,entries)
         name=pick.get('returned')
@@ -429,11 +601,13 @@ def record_new_pairs(panel, numbers):
 
 def eligible_returns(state, entries):
     return [{'n':row['n']} for row in state.values()
-            if row['state']=='submitted' and not row.get('retrieval_error')
+            if row['state'] in RETURN_STATES and not row.get('retrieval_error')
             and len(returned_matches(row,entries))==1]
 
 
 def approve_row(panel, path, state, row, offered):
+    if row.get('export_hold'):
+        raise ValueError(row['export_hold'])
     if (row.get('state') not in ('review','approved') or row.get('master_verified') is not True
             or offered.get('revision')!=row.get('revision')):
         raise ValueError('Review the current revision before approving.')
@@ -462,11 +636,13 @@ def action(panel,name,data):
         for n,row in rows.items():
             if confirmed(panel,n) and state.get(str(n),{}).get('state') in (None,'uncertain','prepared'):
                 state[str(n)]=row | {'state':'submitted','destination':settings(panel)}
+        entries=catalog(panel)
+        discover_historical(panel,state,entries,rows)
         atomic(path,state)
         listed=[dict(state.get(str(n),row|{'state':'uncertain'})) for n,row in sorted(rows.items())]
-        entries=catalog(panel)
+        listed.extend(dict(row) for key,row in state.items() if int(key) not in rows)
         for row in listed:
-            if row['state']=='submitted':
+            if row['state'] in RETURN_STATES:
                 row['local_returns']=returned_matches(row,entries)
         return {'rows':listed,'space':settings(panel)}
     if name=='editor-sync':
@@ -623,7 +799,7 @@ def final_job(panel, numbers):
             if record['draft_id']!=row['working_id'] or revision(draft)!=row['revision']:
                 raise ValueError(f'Vlog {n} changed after approval.')
             bundled=media_path(draft,read(draft/'draft_content.json'))
-            require_hash(bundled,row['files']['Master']['sha256'])
+            require_hash(bundled,row.get('working_media_sha256',row['files']['Master']['sha256']))
             output=destination_path/(row['title']+'.mp4')
             w.exports.RUN=path.parent/f'Final-{n}-{row["revision"][:16]}'
             w.exports.RUN.mkdir(exist_ok=True)
@@ -688,7 +864,7 @@ def final_job(panel, numbers):
                     if not user.PostMessageW(editor.window,0x0010,0,0):
                         raise RuntimeError('CapCut declined to close the completed editor.')
                     wait_for(lambda: not (draft/'.locked').exists(),'the rendered editor to close')
-                    row.update(state='publishing',render_hash=sealed(render),delivery={})
+                    row.update(state='publishing',render_hash=media_digest(render),delivery={})
                     atomic(path,state)
             if row['state']!='publishing':
                 raise ValueError('Native submission is ambiguous. Reconcile it before retrying.')

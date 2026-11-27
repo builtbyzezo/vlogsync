@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+Historical CapCut downloads can match archived master and proxy pairs without a prior submission record. The prepared copy preserves the original draft and bundled ancillary media. The real historical return required a missing footage repair; the archived streams were checked against the saved source references and the original editorial audio was retained. Historical final export presets remain separately gated.
+
 ## 1.3.0
 
 A two-project native Space round trip passed with operator-controlled upload and retrieval. A controller restart between upload confirmations preserved the partial batch. Duplicate submissions and stale approvals were rejected. Both matching returned edits received verified master substitutions and exported once to the isolated destination as 1080p HEVC with matching timeline duration and verified filesystem hashes. CapCut restored its preset. A second computer remains unqualified.

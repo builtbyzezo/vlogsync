@@ -305,7 +305,7 @@ function spaceSettings() {
 $("auto-prepare").onchange=() => send("settings",{power:current.settings.power ?? "none",
   auto_open:current.settings.auto_open ?? false, auto_prepare:$("auto-prepare").checked, space:spaceSettings()});
 const editorLabels={unshared:"Unshared · eligible",uncertain:"Previous submission uncertain",prepared:"Prepared locally",
-  submitted:"Submission confirmed",review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",
+  submitted:"Submission confirmed",downloaded:"Historical return", "history-held":"Needs archive verification",review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",
   publishing:"Publication pending",exported:"Delivered"};
 const selectedByMode={upload:new Set(),sync:new Set(),review:new Set()};
 let historyOpen=false, uncertaintyOpen=false;
@@ -368,7 +368,7 @@ async function editorPanel(mode, open=true) {
     card.querySelector(".editor-card-head").prepend(pick);
   };
   for (const row of rows) {
-    const states={upload:["unshared","uncertain","prepared","submitted"],sync:["submitted","review"],
+    const states={upload:["unshared","uncertain","prepared","submitted"],sync:["submitted","downloaded","history-held","review"],
       review:["review","approved","triggered","publishing","exported"]};
     if (!states[mode].includes(row.state)) continue;
     const card=document.createElement("section"); card.className="setting-card editor-card";
@@ -392,7 +392,7 @@ async function editorPanel(mode, open=true) {
         label.append(pick,`Vlog ${row.n} is incomplete`); exceptions.append(label);
       }
     }
-    if (mode==="sync" && row.state==="submitted") {
+    if (mode==="sync" && ["submitted","downloaded","history-held"].includes(row.state)) {
       const options=row.local_returns ?? [];
       if (options.length===1) card.append(editorDetail(options[0]));
       if (!options.length) card.append(editorDetail("Waiting for the completed local download."));
@@ -419,7 +419,8 @@ async function editorPanel(mode, open=true) {
       title.maxLength=80; title.setAttribute("aria-label",`Final video title for Vlog ${row.n}`);
       controls.append(button("Open in CapCut",()=>send("editor-open",{n:row.n})),title);
       titles.set(row.n,{title,revision:row.revision});
-      if (row.master_verified) selectRow(card,row);
+      if (row.export_hold) card.append(editorDetail(row.export_hold));
+      if (row.master_verified && !row.export_hold) selectRow(card,row);
       const pick=selected.get(row.n);
       if(pick) pick.setAttribute("aria-label",`Approve reviewed Vlog ${row.n} for export`);
       title.oninput=()=>{editorInputs.set(key,title.value);};
