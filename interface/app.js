@@ -305,7 +305,7 @@ function spaceSettings() {
 $("auto-prepare").onchange=() => send("settings",{power:current.settings.power ?? "none",
   auto_open:current.settings.auto_open ?? false, auto_prepare:$("auto-prepare").checked, space:spaceSettings()});
 const editorLabels={unshared:"Unshared · eligible",uncertain:"Previous submission uncertain",prepared:"Prepared locally",
-  submitted:"Submission confirmed",downloaded:"Historical return", "history-held":"Needs archive verification",review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",
+  submitted:"Submission confirmed",downloaded:"Historical return", "history-held":"Needs archive verification",review:"Ready for review",approved:"Approved",triggered:"Reconcile native export",restoring:"Restore import preset",
   publishing:"Publication pending",exported:"Delivered"};
 const selectedByMode={upload:new Set(),sync:new Set(),review:new Set()};
 let historyOpen=false, uncertaintyOpen=false;
@@ -369,7 +369,7 @@ async function editorPanel(mode, open=true) {
   };
   for (const row of rows) {
     const states={upload:["unshared","uncertain","prepared","submitted"],sync:["submitted","downloaded","history-held","review"],
-      review:["review","approved","triggered","publishing","exported"]};
+      review:["review","approved","triggered","restoring","publishing","exported"]};
     if (!states[mode].includes(row.state)) continue;
     const card=document.createElement("section"); card.className="setting-card editor-card";
     const head=document.createElement("div"); head.className="editor-card-head";
@@ -456,7 +456,7 @@ async function editorPanel(mode, open=true) {
     const picks=numbers().map(n=>({n,title:titles.get(n).title.value,revision:titles.get(n).revision}));
     if (picks.length && await send("editor-approve-export",{picks,confirmed:true})) dialog.close();
   }));
-  if (mode==="review" && rows.some(row=>["triggered","publishing"].includes(row.state)))
+  if (mode==="review" && rows.some(row=>["triggered","restoring","publishing"].includes(row.state)))
     actions.append(button("Reconcile saved export",()=>send("editor-resume")));
   if (!dialog.open && open) dialog.showModal();
 }

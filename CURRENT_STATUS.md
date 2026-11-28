@@ -1,5 +1,9 @@
 # Current status
 
+## 1.3.2 native final timeline profiles
+
+Native final exports preserve approved 30 fps and 29.97 fps timelines. Qualification verified the real 30 fps export through exact frame timestamps, full decode, editorial audio and picture spot checks, and a byte-verified filesystem delivery. The controller records a verified render checkpoint before restoring the import preset, allowing recovery without a duplicate render. The standard 29.97 fps preset was checked on an existing disposable draft without exporting it.
+
 ## 1.3.1 historical discovery
 
 Historical CapCut downloads can match archived master and proxy pairs without a prior submission record. The prepared copy preserves the original draft and bundled ancillary media. The real historical return required a missing footage repair; the archived streams were checked against the saved source references and the original editorial audio was retained. Historical final export presets remain separately gated.

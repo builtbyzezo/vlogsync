@@ -27,3 +27,5 @@ To roll back 1.2.3, close the idle panel, restore the saved 1.2.2 qualification 
 To roll back 1.3.0, close the idle panel, restore the saved 1.2.3 qualification marker, and run the saved 1.2.3 launcher. Preserve the Phase 3 local editor-handoff journals for future upgrades.
 
 To roll back 1.3.1, close the idle panel, restore the saved 1.3.0 qualification marker, and use the saved 1.3.0 launcher. Preserve the local editor-handoff journal and untouched draft backups.
+
+To roll back 1.3.2, close the idle panel, restore the saved 1.3.1 qualification marker, and run the saved 1.3.1 launcher. Preserve the editor-handoff journal and verified final outputs.

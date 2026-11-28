@@ -111,6 +111,11 @@ def revision(draft):
         # CapCut's native Duplicate updates the draft format version and timestamps.
         for volatile in ('update_time','create_time','last_open_time','new_version'):
             doc.pop(volatile,None)
+        # CapCut 9.8 writes an explicit default when opening legacy audio.
+        # Channel assignments and every other mapping value remain revision-bound.
+        for mapping in doc.get('materials',{}).get('sound_channel_mappings',[]):
+            if mapping.get('type')=='':
+                mapping['type']='none'
         documents.append((path.relative_to(draft).as_posix(),doc))
     if not documents:
         raise ValueError('The draft has no readable timeline.')
@@ -136,7 +141,7 @@ def local_draft(root, name):
     return path,row[0]
 
 
-def media_binding(draft, doc, *, allow_missing=False):
+def media_binding(draft, doc, *, allow_missing=False, approved_audio=None):
     number=project_number(draft.name)
     bindings={}
     for video in doc['materials']['videos']:
@@ -157,6 +162,12 @@ def media_binding(draft, doc, *, allow_missing=False):
     for audio in doc['materials'].get('audios',[]):
         value=audio.get('path','')
         if value:
+            if approved_audio and value in approved_audio:
+                external=Path(value)
+                if not external.is_absolute() or external.is_symlink() or not external.is_file():
+                    raise ValueError('An approved editorial audio file is unavailable.')
+                require_hash(external,approved_audio[value])
+                continue
             match=re.fullmatch(r'##_draftpath_placeholder_[A-Fa-f0-9-]+_##/(.+)',value)
             rel=Path(match[1]) if match else None
             if (rel is None or rel.anchor or ':' in str(rel) or '..' in rel.parts
@@ -497,8 +508,10 @@ def retrieve(panel,row,name,copy_name):
     if revision(duplicate)!=original_revision:
         raise ValueError('The working timeline changed during substitution.')
     row.update(state='review',returned=name,working=copy_name,working_id=copy_record['draft_id'],revision=original_revision,working_media_sha256=working_hash)
-    if row.get('historical') and abs(float(original_doc.get('fps',0))-30000/1001)>.001:
-        row['export_hold']='The historical timeline frame rate requires separate final export qualification.'
+    try:
+        final_profile(original_doc)
+    except ValueError as error:
+        row['export_hold']=str(error)
 
 
 def title(value):
@@ -605,8 +618,40 @@ def eligible_returns(state, entries):
             and len(returned_matches(row,entries))==1]
 
 
+def final_profile(doc):
+    from fractions import Fraction
+    raw=doc.get('fps')
+    if isinstance(raw,(int,float)) and not isinstance(raw,bool):
+        for exact,label in ((Fraction(30),'30fps'),(Fraction(30000,1001),'29.97fps')):
+            if abs(raw-float(exact))<0.001:
+                return exact,label
+    raise ValueError('The saved timeline frame rate has not been qualified for final export.')
+
+
+def verify_final(w, render, item):
+    from fractions import Fraction
+    data=w.exports.metadata(render,'Master',item['duration_us'])
+    video=data['video']
+    rate=Fraction(item['frame_rate'])
+    if Fraction(video['avg_frame_rate'])!=rate:
+        raise ValueError('The rendered frame rate differs from the approved timeline.')
+    frames=round(Fraction(item['duration_us'],1_000_000)*rate)
+    if int(video['nb_frames'])!=frames or abs(Fraction(video['duration'])-frames/rate)>Fraction(1,1_000_000):
+        raise ValueError('The rendered frame count or duration differs from the approved timeline.')
+    (v,video_packets),(a,audio_packets)=timing(w,render)
+    if video_packets!=[(Fraction(n,1)/rate,1/rate) for n in range(frames)]:
+        raise ValueError('The rendered video has a presentation timing gap or unexpected timestamp.')
+    if (a.get('codec_name')!='aac' or not audio_packets or not data['audio']
+        or abs(float(data['audio'][0]['duration'])-float(video['duration']))>.05
+        or any(left[0]+left[1]!=right[0] for left,right in zip(audio_packets,audio_packets[1:]))):
+        raise ValueError('The rendered editorial audio has a timing gap or mismatched duration.')
+    subprocess.run([str(w.exports.FFMPEG),'-nostdin','-v','error','-xerror','-i',str(render),
+                    '-map','0:v:0','-map','0:a:0','-f','null','-'],check=True,timeout=1800)
+    return data
+
+
 def approve_row(panel, path, state, row, offered):
-    if row.get('export_hold'):
+    if row.get('export_hold') and row['export_hold']!='The historical timeline frame rate requires separate final export qualification.':
         raise ValueError(row['export_hold'])
     if (row.get('state') not in ('review','approved') or row.get('master_verified') is not True
             or offered.get('revision')!=row.get('revision')):
@@ -616,6 +661,7 @@ def approve_row(panel, path, state, row, offered):
         draft,record=local_draft(w.exports.ROOT,row['working'])
         if (draft/'.locked').exists() or record['draft_id']!=row['working_id']:
             raise ValueError('Close the exact working copy after review.')
+        final_profile(read(draft/'draft_content.json'))
         current=revision(draft)
         if current!=row['revision']:
             row.update(state='review',revision=current)
@@ -642,6 +688,14 @@ def action(panel,name,data):
         listed=[dict(state.get(str(n),row|{'state':'uncertain'})) for n,row in sorted(rows.items())]
         listed.extend(dict(row) for key,row in state.items() if int(key) not in rows)
         for row in listed:
+            if (panel.live and row.get('export_hold')=='The historical timeline frame rate requires separate final export qualification.' and row.get('working')):
+                w=engine(panel)
+                try:
+                    draft,_=local_draft(w.exports.ROOT,row['working'])
+                    final_profile(read(draft/'draft_content.json'))
+                    row.pop('export_hold',None)
+                except (OSError,ValueError):
+                    pass
             if row['state'] in RETURN_STATES:
                 row['local_returns']=returned_matches(row,entries)
         return {'rows':listed,'space':settings(panel)}
@@ -667,7 +721,7 @@ def action(panel,name,data):
         atomic(path,state)
         return {'confirmed':len(selected)}
     if name=='editor-approve-export':
-        if any(r.get('state') in ('triggered','publishing') for r in state.values()):
+        if any(r.get('state') in ('triggered','restoring','publishing') for r in state.values()):
             raise ValueError('Reconcile the previous native export before submitting another batch.')
         picks=data['picks']
         if not isinstance(picks,list) or not 1<=len(picks)<=20 or data.get('confirmed') is not True:
@@ -711,12 +765,12 @@ def action(panel,name,data):
                 w.msvcrt.locking(lease.fileno(),w.msvcrt.LK_NBLCK,1)
             except OSError as error:
                 raise ValueError('The existing controller still owns the native export.') from error
-        numbers=[r['n'] for r in state.values() if r.get('state') in ('triggered','publishing')]
+        numbers=[r['n'] for r in state.values() if r.get('state') in ('triggered','restoring','publishing')]
         if not numbers:
             raise ValueError('No saved native submission or verified publication checkpoint.')
         return panel.spawn('editor-export',{'numbers':numbers})
     elif name=='editor-export':
-        if any(r.get('state') in ('exporting','triggered','publishing') for r in state.values()):
+        if any(r.get('state') in ('exporting','triggered','restoring','publishing') for r in state.values()):
             raise ValueError('Reconcile the previous native export before submitting another batch.')
         numbers=data['numbers']
         if not isinstance(numbers,list) or not numbers or len(numbers)>20 or any(type(n) is not int for n in numbers):
@@ -798,7 +852,7 @@ def final_job(panel, numbers):
             draft,record=local_draft(w.exports.ROOT,row['working'])
             if record['draft_id']!=row['working_id'] or revision(draft)!=row['revision']:
                 raise ValueError(f'Vlog {n} changed after approval.')
-            bundled=media_path(draft,read(draft/'draft_content.json'))
+            bundled,_=media_binding(draft,read(draft/'draft_content.json'),approved_audio=row.get('approved_external_audio'))
             require_hash(bundled,row.get('working_media_sha256',row['files']['Master']['sha256']))
             output=destination_path/(row['title']+'.mp4')
             w.exports.RUN=path.parent/f'Final-{n}-{row["revision"][:16]}'
@@ -807,10 +861,15 @@ def final_job(panel, numbers):
             w.exports.OUTPUT=w.exports.RUN
             (w.exports.OUTPUT/'Master').mkdir(exist_ok=True)
             doc=read(draft/'draft_content.json')
-            item=dict(title=row['working'],date=row['date'],output_stem=f'Vlog {n}',duration_us=doc['duration'])
+            rate,label=final_profile(doc)
+            job_key=row.get('date') or f'historical-{n}'
+            item=dict(title=row['working'],date=job_key,output_stem=f'Vlog {n}',duration_us=doc['duration'],
+                      frame_rate=str(rate),frame_rate_label=label)
             if not w.exports.PLAN.exists():
                 d.write_new(w.exports.PLAN,d.encode({'projects':[item]}))
-            render=w.exports.target(row['date'],'Master')
+            elif read(w.exports.PLAN).get('projects')!=[item]:
+                raise ValueError('The saved export plan differs from the approved timeline.')
+            render=w.exports.target(job_key,'Master')
             if row['state']=='approved':
                 if output.exists() or render.exists() or list(w.exports.RUN.glob('*trigger*.json')):
                     raise ValueError(f'Existing final file or trigger held for Vlog {n}.')
@@ -836,7 +895,7 @@ def final_job(panel, numbers):
             if row['state']=='triggered':
                 # The exact native result is required on restart. A file by itself
                 # does not prove CapCut finished or that this controller produced it.
-                receipt=w.exports.RUN/f'{row["date"]}-Master-trigger.json'
+                receipt=w.exports.RUN/f'{job_key}-Master-trigger.json'
                 if read(receipt,{}).get('path')!=str(render):
                     raise ValueError('Native submission was interrupted before a confirmed trigger. Review manually.')
                 with WinOcr() as ocr:
@@ -852,10 +911,32 @@ def final_job(panel, numbers):
                     time.sleep(2)
                     if size<=0 or render.stat().st_size!=size:
                         raise ValueError('Native output size has not settled.')
-                    w.output_info(render,'Master',{'duration_us':item['duration_us'],
-                                  'sources':[{'has_audio':True}]})
-                    result.click(result.button('Close',Box(result.bounds.w//2,result.bounds.h-125,
-                                                             result.bounds.w//2,125)).center)
+                    verification=w.exports.RUN/'verified-final.json'
+                    verified=read(verification,{})
+                    if (verified.get('path')!=str(render) or verified.get('bytes')!=size
+                            or verified.get('last_write')!=render.stat().st_mtime
+                            or not verified.get('sha256')
+                            or verified.get('video',{}).get('avg_frame_rate')!=str(rate.numerator)+'/'+str(rate.denominator)):
+                        verified=verify_final(w,render,item)
+                        stamp=w.exports.draft.source_stamp(render)
+                        verified['sha256']=media_digest(render)
+                        if stamp!=w.exports.draft.source_stamp(render):
+                            raise ValueError('The verified render changed during fingerprinting.')
+                        atomic(verification,verified)
+                    else:
+                        require_hash(render,verified['sha256'])
+                    row.update(state='restoring',render_hash=verified['sha256'])
+                    atomic(path,state)
+            if row['state']=='restoring':
+                require_hash(render,row['render_hash'])
+                with WinOcr() as ocr:
+                    ui=CapCut(w.exports,ocr)
+                    expected='Export-'+item['title']
+                    if ui.windows(expected):
+                        result=ui.dialog(expected)
+                        if ui.finished(result):
+                            result.click(result.button('Close',Box(result.bounds.w//2,result.bounds.h-125,
+                                                                     result.bounds.w//2,125)).center)
                     ui.restore_master(item)
                     editor=ui.screen(ui.get_window('CapCut'))
                     if not ui.editor_for(editor,item['title']):
@@ -864,8 +945,8 @@ def final_job(panel, numbers):
                     if not user.PostMessageW(editor.window,0x0010,0,0):
                         raise RuntimeError('CapCut declined to close the completed editor.')
                     wait_for(lambda: not (draft/'.locked').exists(),'the rendered editor to close')
-                    row.update(state='publishing',render_hash=media_digest(render),delivery={})
-                    atomic(path,state)
+                row.update(state='publishing',delivery={})
+                atomic(path,state)
             if row['state']!='publishing':
                 raise ValueError('Native submission is ambiguous. Reconcile it before retrying.')
             require_hash(render,row['render_hash'])

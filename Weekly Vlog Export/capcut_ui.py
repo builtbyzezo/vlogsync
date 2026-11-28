@@ -484,14 +484,16 @@ class CapCut:
             return result if self.value(result,label,value) else None
         return wait_for(confirmed,f'CapCut to retain {label} {value}',seconds=8)
 
-    def configure(self, screen, kind):
+    def configure(self, screen, kind, *, frame_rate='29.97fps'):
         expected = title(screen.window)
         codec, size = ('HEVC', '1080P') if kind == 'Master' else ('H.264', '720P')
         screen = self.choose(screen, 'Resolution', size)
         screen = self.choose(screen, 'Codec', codec)
         screen = self.choose(screen, 'Format', 'mp4')
-        if not self.value(screen, 'Frame rate', '29.97fps'):
-            screen = self.choose(screen, 'Frame rate', '29.97fps')
+        if frame_rate not in ('29.97fps','30fps'):
+            raise ValueError('Unsupported native export frame rate.')
+        if not self.value(screen, 'Frame rate', frame_rate):
+            screen = self.choose(screen, 'Frame rate', frame_rate)
         screen = self.choose(screen, 'Bit rate', 'Recommended' if kind == 'Master' else 'Custom')
         if kind == 'Proxy':
             bit_rate=self.reference(screen,'Bit rate')
@@ -538,7 +540,7 @@ class CapCut:
         screen = chosen or self.export_dialog(item)
         if not self.is_setup(screen):
             screen = self.await_setup(expected)
-        screen = self.configure(screen, kind)
+        screen = self.configure(screen, kind, frame_rate=item.get('frame_rate_label','29.97fps'))
         if not chosen:
             screen = self.destination(screen, path.parent)
         label = self.reference(screen, 'Name')
@@ -639,6 +641,10 @@ class CapCut:
         screen = self.configure(self.export_dialog(item), 'Master')
         close(screen)
         wait_for(lambda: not self.windows('Export-'+item['title']), 'preset dialog to close')
+        if item.get('frame_rate_label')=='30fps':
+            # Reopening a 30 fps project initializes its own timeline rate again.
+            # Import's configure() always selects 29.97 at its own entry point.
+            return
         editor = self.screen(self.get_window('CapCut'))
         if not self.editor_for(editor,item['title']):
             editor.unique(item['title'], area=Box(0,0,editor.bounds.w,65))

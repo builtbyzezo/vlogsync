@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from panel import Panel
-from editor_handoff import revision, title, retrieval_selection, retrieve_job, catalog, store, record_new_pairs, eligible_returns, returned_matches, media_binding, historical_pair
+from editor_handoff import final_profile, revision, title, retrieval_selection, retrieve_job, catalog, store, record_new_pairs, eligible_returns, returned_matches, media_binding, historical_pair
 from panel import read
 
 
@@ -112,6 +112,23 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(set(historical_pair(142,folders,rows)),{'Master','Proxy'})
         conflict=dict(rows[-1],sha256Checksum='b'*64)
         self.assertFalse(historical_pair(142,folders,[*rows,conflict]))
+
+    def test_final_profile_preserves_exact_rate(self):
+        self.assertEqual(str(final_profile({'fps':30})[0]),'30')
+        self.assertEqual(str(final_profile({'fps':30000/1001})[0]),'30000/1001')
+        with self.assertRaises(ValueError):
+            final_profile({'fps':25})
+
+    def test_default_channel_serialization_is_not_an_edit(self):
+        content=self.panel.root/'draft_content.json'
+        def set_mapping(kind):
+            content.write_text(json.dumps({'materials':{'sound_channel_mappings':[{'type':kind,'id':'a'}]}}))
+        set_mapping('')
+        first=revision(self.panel.root)
+        set_mapping('none')
+        self.assertEqual(revision(self.panel.root),first)
+        set_mapping('left')
+        self.assertNotEqual(revision(self.panel.root),first)
 
     def test_revision_includes_effect_and_rejects_unsafe_title(self):
         folder=self.panel.root
